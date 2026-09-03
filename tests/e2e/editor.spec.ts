@@ -93,7 +93,7 @@ async function revision(page: Page): Promise<number> {
 
 async function roomPointToClient(editor: Locator, xMm: number, yMm: number): Promise<{ x: number; y: number }> {
   return editor.evaluate((node, point) => {
-    const matrix = node.getScreenCTM();
+    const matrix = (node as SVGGraphicsElement).getScreenCTM();
     if (!matrix) throw new Error("SVG screen CTM is unavailable.");
     const transformed = new DOMPoint(point.xMm, point.yMm).matrixTransform(matrix);
     return { x: transformed.x, y: transformed.y };
