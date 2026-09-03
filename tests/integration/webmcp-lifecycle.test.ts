@@ -297,6 +297,7 @@ async function workspaceHarness(options: { store?: DomainStore; realPrecision?: 
   const store = options.store ?? {
     subscribe: vi.fn((listener: (value: StoreSnapshot) => void) => { drawFromStore = listener; return unsubscribe; }),
     updateFurniturePose,
+    invalidateHumanFit: vi.fn(),
   } as unknown as DomainStore;
   const root = new TestElement("div");
   const spatial = { update: vi.fn(), cancelInteraction: vi.fn(), dispose: vi.fn() };
