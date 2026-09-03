@@ -9,12 +9,22 @@ async function installCapture(page: Page): Promise<void> {
   });
 }
 
-async function stageHome(page: Page): Promise<void> {
+async function stageHome(page: Page, idempotencyKey = "fixture-home-0001"): Promise<void> {
   const inspect = await page.evaluate(async () => (window as any).__elnuvaTools.get("inspect_spatial_layout").execute({}, { signal: new AbortController().signal }));
   const moves = [{ itemId: "desk-main", pose: { xMm: 1900, yMm: 500, rotationDeg: 0 } }];
   const validation = await page.evaluate(async ({ inspect, moves }) => (window as any).__elnuvaTools.get("validate_layout_options").execute({ baseRevision: inspect.data.baseRevision, baseHash: inspect.data.baseHash, constraints: inspect.data.workingState.constraints, options: [{ optionId: "home-valid", moves }] }, { signal: new AbortController().signal }), { inspect, moves });
-  const staged = await page.evaluate(async ({ inspect, moves, result }) => (window as any).__elnuvaTools.get("stage_layout_preview").execute({ baseRevision: inspect.data.baseRevision, baseHash: inspect.data.baseHash, constraints: inspect.data.workingState.constraints, optionId: "home-valid", moves, proposalDigest: result.proposalDigest, idempotencyKey: "fixture-home-0001" }, { signal: new AbortController().signal }), { inspect, moves, result: validation.data.results[0] });
+  const staged = await page.evaluate(async ({ inspect, moves, result, idempotencyKey }) => (window as any).__elnuvaTools.get("stage_layout_preview").execute({ baseRevision: inspect.data.baseRevision, baseHash: inspect.data.baseHash, constraints: inspect.data.workingState.constraints, optionId: "home-valid", moves, proposalDigest: result.proposalDigest, idempotencyKey }, { signal: new AbortController().signal }), { inspect, moves, result: validation.data.results[0], idempotencyKey });
   expect(staged).toMatchObject({ ok: true, data: { notApplied: true, notSaved: true } });
+}
+
+async function expectMeaningfulFocus(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || !(active instanceof HTMLElement)) return false;
+    if (active.matches("[data-editor-status]")) return true;
+    return Boolean(active.closest("[data-geometry-row], form[data-feature-id], [data-constraint-row]"));
+  })).toBe(true);
+  await expect(page.locator(":focus")).toBeVisible();
 }
 
 function contrastRatio(foreground: string, background: string): number {
@@ -140,6 +150,60 @@ test.describe("T08 accessibility and truthful state", () => {
     await page.getByRole("button", { name: "Discard preview" }).focus();
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
+  });
+
+  test("returns keyboard focus to a meaningful target after preview Discard and Apply", async ({ page }) => {
+    await installCapture(page);
+    await page.goto("/");
+    await stageHome(page, "fixture-home-0003");
+    await page.getByRole("button", { name: "Discard preview" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
+    await expectMeaningfulFocus(page);
+    await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/discard|preview/i);
+
+    await stageHome(page, "fixture-home-0002");
+    await page.getByRole("button", { name: "Apply preview" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
+    await expectMeaningfulFocus(page);
+    await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/appl|desk-main|preview/i);
+  });
+
+  test("returns keyboard focus to a meaningful remaining target after deleting furniture, feature, and constraint", async ({ page }) => {
+    await page.goto("/");
+
+    const furnitureDelete = page.locator('[data-geometry-row][data-item-id="storage-main"]');
+    await furnitureDelete.getByRole("checkbox", { name: "Locked" }).uncheck();
+    const deleteFurniture = furnitureDelete.getByRole("button", { name: "Delete furniture" });
+    await deleteFurniture.focus();
+    await page.keyboard.press("Enter");
+    await expect(furnitureDelete).toHaveCount(0);
+    await expectMeaningfulFocus(page);
+    await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/storage-main|delet/i);
+
+    const featureAdd = page.getByRole("button", { name: "Add feature" }).locator("xpath=ancestor::form[1]");
+    await featureAdd.getByRole("combobox", { name: "Feature type" }).selectOption("window-1400");
+    await featureAdd.getByRole("combobox", { name: "Wall", exact: true }).selectOption("south");
+    await featureAdd.getByRole("spinbutton", { name: "Offset (mm)" }).fill("400");
+    await featureAdd.getByRole("button", { name: "Add feature" }).click();
+    const featureId = await page.locator("form[data-feature-id]").last().getAttribute("data-feature-id");
+    expect(featureId).toBeTruthy();
+    const featureDelete = page.locator(`form[data-feature-id="${featureId}"]`);
+    const deleteFeature = featureDelete.getByRole("button", { name: "Delete" });
+    await deleteFeature.focus();
+    await page.keyboard.press("Enter");
+    await expect(featureDelete).toHaveCount(0);
+    await expectMeaningfulFocus(page);
+    await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/delet|feature/i);
+
+    const constraintDelete = page.locator('[data-constraint-row][data-constraint-id="c-window"]');
+    const deleteConstraint = constraintDelete.getByRole("button", { name: "Delete constraint" });
+    await deleteConstraint.focus();
+    await page.keyboard.press("Enter");
+    await expect(constraintDelete).toHaveCount(0);
+    await expectMeaningfulFocus(page);
+    await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/c-window|delet/i);
   });
 
   test("does not render internal storage, replay, prompt, or inactive-template metadata", async ({ page }) => {
