@@ -79,6 +79,14 @@ async function registeredTools(store: DomainStore) {
   return { registration, tools, byName };
 }
 
+type MissingExecutionOptions = "omitted" | "undefined" | "empty";
+
+function executeWithoutSignal(tool: CapturedTool, input: unknown, shape: MissingExecutionOptions): Promise<unknown> {
+  // Invoke the captured callback with the client's actual argument list, without type casts or a synthetic signal.
+  const args = shape === "omitted" ? [input] : [input, shape === "undefined" ? undefined : {}];
+  return Promise.resolve(Reflect.apply(tool.execute, undefined, args));
+}
+
 describe("T06 registered handler/store integration", () => {
   it("invokes all three registered execute functions against one store with exact effect boundaries", async () => {
     const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
@@ -207,6 +215,353 @@ describe("T06 registered handler/store integration", () => {
     });
     expect(verifier).toHaveBeenCalledTimes(1);
     expect(store.recordCount).toBe(1);
+    registration.teardown();
+  });
+});
+
+describe("T06 registered runtime callback compatibility", () => {
+  it.each(["omitted", "undefined", "empty"] as const)("executes all three registered tools with %s options without changing their golden effects", async (shape) => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => verifyStageRequest(input));
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    const before = await store.snapshot();
+
+    await expect(executeWithoutSignal(byName.inspect_spatial_layout, {}, shape)).resolves.toStrictEqual({
+      ok: true,
+      data: createHomeOfficeInspectData(),
+    });
+    expect(await store.snapshot()).toStrictEqual(before);
+
+    await expect(executeWithoutSignal(byName.validate_layout_options, validOption(before), shape)).resolves.toStrictEqual({
+      ok: true,
+      data: {
+        baseRevision: 1,
+        baseHash: before.baseHash,
+        results: [{ ...expectedStageValidation, inputIndex: 0, rank: 1 }],
+        rankedOptionIds: ["home-valid"],
+      },
+    });
+    expect(await store.snapshot()).toStrictEqual(before);
+    expect(store.recordCount).toBe(0);
+    expect(storage.setItem).not.toHaveBeenCalled();
+
+    await expect(executeWithoutSignal(byName.stage_layout_preview, validStage(before), shape)).resolves.toStrictEqual({
+      ok: true,
+      data: {
+        previewId: HOME_DIGEST,
+        optionId: "home-valid",
+        proposalDigest: HOME_DIGEST,
+        validation: expectedStageValidation,
+        notApplied: true,
+        notSaved: true,
+        requiresHumanAction: true,
+        allowedHumanActions: ["apply", "discard"],
+      },
+    });
+    expect(await store.snapshot()).toStrictEqual({
+      ...before,
+      preview: {
+        status: "pending-review",
+        baseRevision: before.baseRevision,
+        baseHash: before.baseHash,
+        optionId: "home-valid",
+        moves: validStage(before).moves,
+        constraints: before.workingState.constraints,
+        proposalDigest: HOME_DIGEST,
+        idempotencyKey: "fixture-home-0001",
+        validation: expectedStageValidation,
+        projectedFurniture: before.workingState.furniture.map((item) => item.id === "desk-main" ? { ...item, xMm: 1900 } : item),
+        notApplied: true,
+        notSaved: true,
+        requiresHumanAction: true,
+      },
+    });
+    expect(store.recordCount).toBe(1);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(store.discard()).toStrictEqual({ ok: true, data: undefined });
+    expect(store.undo()).toStrictEqual({ ok: false, error: { code: "NOTHING_TO_UNDO", message: "There is no layout change to undo." } });
+    expect(await store.snapshot()).toStrictEqual(before);
+    registration.teardown();
+  });
+
+  it("cancels otherwise-eligible pre-aborted calls without changing protected state", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => verifyStageRequest(input));
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const before = await store.snapshot();
+    const inspect = vi.spyOn(store, "inspect");
+    const beginValidate = vi.spyOn(store, "beginValidate");
+    const stage = vi.spyOn(store, "stage");
+    const { registration, byName } = await registeredTools(store);
+    const controller = new AbortController();
+    controller.abort();
+
+    for (const [tool, input] of [
+      [byName.inspect_spatial_layout, {}],
+      [byName.validate_layout_options, validOption(before)],
+    ] as const) {
+      await expect(tool.execute(input, { signal: controller.signal })).resolves.toStrictEqual({
+        ok: false,
+        error: { code: "CANCELLED", message: "The operation was cancelled." },
+      });
+    }
+    await expect(byName.stage_layout_preview.execute(validStage(before), { signal: controller.signal })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "CANCELLED", message: "The Stage operation was cancelled before the preview was committed." },
+    });
+
+    expect(inspect).not.toHaveBeenCalled();
+    expect(beginValidate).not.toHaveBeenCalled();
+    expect(stage).toHaveBeenCalledTimes(1);
+    expect(stage).toHaveBeenCalledWith(validStage(before), controller.signal);
+    expect(verifier).not.toHaveBeenCalled();
+    expect(await store.snapshot()).toStrictEqual(before);
+    expect(store.recordCount).toBe(0);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("validates a malformed Stage envelope before an aborted signal", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const store = createDocumentStore({ storage, stageVerifier: verifyStageRequest });
+    const before = await store.snapshot();
+    const stage = vi.spyOn(store, "stage");
+    const { registration, byName } = await registeredTools(store);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(byName.stage_layout_preview.execute({ ...validStage(before), unexpected: true }, { signal: controller.signal })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "The request is invalid." },
+    });
+    expect(stage).not.toHaveBeenCalled();
+    expect(await store.snapshot()).toStrictEqual(before);
+    expect(store.recordCount).toBe(0);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("honors completed Stage replay and digest conflict before an aborted signal", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => verifyStageRequest(input));
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    const before = await store.snapshot();
+    const request = validStage(before);
+    const first = await byName.stage_layout_preview.execute(request, { signal: signal() });
+    expect(first).toStrictEqual({
+      ok: true,
+      data: {
+        previewId: HOME_DIGEST,
+        optionId: "home-valid",
+        proposalDigest: HOME_DIGEST,
+        validation: expectedStageValidation,
+        notApplied: true,
+        notSaved: true,
+        requiresHumanAction: true,
+        allowedHumanActions: ["apply", "discard"],
+      },
+    });
+    const staged = await store.snapshot();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(byName.stage_layout_preview.execute(request, { signal: controller.signal })).resolves.toStrictEqual(first);
+    await expect(byName.stage_layout_preview.execute({ ...request, proposalDigest: "f".repeat(64) }, { signal: controller.signal })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "IDEMPOTENCY_CONFLICT", message: "This idempotency key is already bound to another proposal." },
+    });
+    expect(await store.snapshot()).toStrictEqual(staged);
+    expect(store.discard()).toStrictEqual({ ok: true, data: undefined });
+    await expect(byName.stage_layout_preview.execute(request, { signal: controller.signal })).resolves.toStrictEqual(first);
+    expect(await store.snapshot()).toStrictEqual(before);
+    expect(store.recordCount).toBe(1);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("honors the active Stage reservation before an incoming aborted signal", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const concurrent: { join?: Promise<unknown>; conflict?: Promise<unknown>; busy?: Promise<unknown> } = {};
+    const controller = new AbortController();
+    controller.abort();
+    let stageTool!: CapturedTool;
+    let request!: StageRequest;
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => {
+      concurrent.join = Promise.resolve(stageTool.execute(request, { signal: controller.signal }));
+      concurrent.conflict = Promise.resolve(stageTool.execute({ ...request, proposalDigest: "f".repeat(64) }, { signal: controller.signal }));
+      concurrent.busy = Promise.resolve(stageTool.execute({ ...request, idempotencyKey: "fixture-home-0002" }, { signal: controller.signal }));
+      return verifyStageRequest(input);
+    });
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    stageTool = byName.stage_layout_preview;
+    const before = await store.snapshot();
+    request = validStage(before);
+
+    const first = await stageTool.execute(request, { signal: signal() });
+    expect(first).toStrictEqual({
+      ok: true,
+      data: {
+        previewId: HOME_DIGEST,
+        optionId: "home-valid",
+        proposalDigest: HOME_DIGEST,
+        validation: expectedStageValidation,
+        notApplied: true,
+        notSaved: true,
+        requiresHumanAction: true,
+        allowedHumanActions: ["apply", "discard"],
+      },
+    });
+    if (!concurrent.join || !concurrent.conflict || !concurrent.busy) throw new Error("The Stage verifier did not exercise its active reservation.");
+    await expect(concurrent.join).resolves.toStrictEqual(first);
+    await expect(concurrent.conflict).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "IDEMPOTENCY_CONFLICT", message: "This idempotency key is already bound to another proposal." },
+    });
+    await expect(concurrent.busy).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "STATE_UNAVAILABLE", message: "The document is not available for this Stage operation." },
+    });
+    const staged = await store.snapshot();
+    expect(staged.preview).not.toBeNull();
+    expect(staged.workingState).toStrictEqual(before.workingState);
+    expect(staged.baseRevision).toBe(before.baseRevision);
+    expect(staged.baseHash).toBe(before.baseHash);
+    expect(store.recordCount).toBe(1);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("still observes a supplied signal aborted during Stage verification before committing a preview", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const controller = new AbortController();
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => {
+      const verified = await verifyStageRequest(input);
+      controller.abort();
+      return verified;
+    });
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    const before = await store.snapshot();
+
+    await expect(byName.stage_layout_preview.execute(validStage(before), { signal: controller.signal })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "CANCELLED", message: "The Stage operation was cancelled before the preview was committed." },
+    });
+    expect(await store.snapshot()).toStrictEqual(before);
+    expect(store.recordCount).toBe(0);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("retains Stage reservation, join, conflict, replay, and preview-only behavior without a signal", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    const concurrent: { join?: Promise<unknown>; conflict?: Promise<unknown>; busy?: Promise<unknown> } = {};
+    let stageTool!: CapturedTool;
+    let request!: StageRequest;
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => {
+      concurrent.join = executeWithoutSignal(stageTool, request, "undefined");
+      concurrent.conflict = executeWithoutSignal(stageTool, { ...request, proposalDigest: "f".repeat(64) }, "empty");
+      concurrent.busy = executeWithoutSignal(stageTool, { ...request, idempotencyKey: "fixture-home-0002" }, "omitted");
+      return verifyStageRequest(input);
+    });
+    const store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    stageTool = byName.stage_layout_preview;
+    const before = await store.snapshot();
+    request = validStage(before);
+
+    const first = await executeWithoutSignal(stageTool, request, "omitted");
+    expect(first).toStrictEqual({
+      ok: true,
+      data: {
+        previewId: HOME_DIGEST,
+        optionId: "home-valid",
+        proposalDigest: HOME_DIGEST,
+        validation: expectedStageValidation,
+        notApplied: true,
+        notSaved: true,
+        requiresHumanAction: true,
+        allowedHumanActions: ["apply", "discard"],
+      },
+    });
+    if (!concurrent.join || !concurrent.conflict || !concurrent.busy) throw new Error("The Stage verifier did not exercise its active reservation.");
+    await expect(concurrent.join).resolves.toStrictEqual(first);
+    await expect(concurrent.conflict).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "IDEMPOTENCY_CONFLICT", message: "This idempotency key is already bound to another proposal." },
+    });
+    await expect(concurrent.busy).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "STATE_UNAVAILABLE", message: "The document is not available for this Stage operation." },
+    });
+    const staged = await store.snapshot();
+    expect(staged.preview).not.toBeNull();
+    expect(staged.workingState).toStrictEqual(before.workingState);
+    expect(staged.baseRevision).toBe(before.baseRevision);
+    expect(staged.baseHash).toBe(before.baseHash);
+    expect(store.recordCount).toBe(1);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+
+    expect(store.discard()).toStrictEqual({ ok: true, data: undefined });
+    const discarded = await store.snapshot();
+    expect(discarded).toStrictEqual(before);
+    await expect(executeWithoutSignal(stageTool, request, "empty")).resolves.toStrictEqual(first);
+    await expect(executeWithoutSignal(stageTool, { ...request, proposalDigest: "f".repeat(64) }, "undefined")).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "IDEMPOTENCY_CONFLICT", message: "This idempotency key is already bound to another proposal." },
+    });
+    expect(await store.snapshot()).toStrictEqual(discarded);
+    expect(store.recordCount).toBe(1);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    registration.teardown();
+  });
+
+  it("still rejects a final Stage CAS conflict and releases its reservation when no signal is supplied", async () => {
+    const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
+    let store!: DomainStore;
+    const verifier = vi.fn(async (input: StageVerificationInput): Promise<ToolResult<VerifiedStageData>> => {
+      const verified = await verifyStageRequest(input);
+      expect(store.updateFurniturePose("chair-main", { xMm: 2600, yMm: 1300, rotationDeg: 0 })).toStrictEqual({ ok: true, data: undefined });
+      return verified;
+    });
+    store = createDocumentStore({ storage, stageVerifier: verifier });
+    const { registration, byName } = await registeredTools(store);
+    const before = await store.snapshot();
+    const request = validStage(before);
+
+    await expect(executeWithoutSignal(byName.stage_layout_preview, request, "empty")).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "REVISION_CONFLICT", message: "The layout changed before the preview could be staged." },
+    });
+    const afterHumanEdit = await store.snapshot();
+    expect(afterHumanEdit.preview).toBeNull();
+    expect(afterHumanEdit.baseRevision).toBe(before.baseRevision + 1);
+    expect(afterHumanEdit.baseHash).not.toBe(before.baseHash);
+    expect(afterHumanEdit.workingState).toStrictEqual({
+      ...before.workingState,
+      furniture: before.workingState.furniture.map((item) => item.id === "chair-main" ? { ...item, xMm: 2600 } : item),
+    });
+    expect(store.recordCount).toBe(0);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
+
+    await expect(executeWithoutSignal(byName.stage_layout_preview, { ...request, idempotencyKey: "fixture-home-retry1" }, "undefined")).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "REVISION_CONFLICT", message: "The layout changed before the option could be verified." },
+    });
+    expect(await store.snapshot()).toStrictEqual(afterHumanEdit);
+    expect(store.recordCount).toBe(0);
+    expect(verifier).toHaveBeenCalledTimes(1);
+    expect(storage.setItem).not.toHaveBeenCalled();
     registration.teardown();
   });
 });
