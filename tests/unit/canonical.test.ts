@@ -16,5 +16,10 @@ describe("canonical domain projections", () => {
     expect(() => canonicalizeWorkingState({ ...createFactoryState("home-office"), extra: true } as any)).toThrow();
     expect(() => canonicalizeWorkingState({ ...createFactoryState("home-office"), room: { widthMm: 3600.5, depthMm: 3000 } } as any)).toThrow();
     expect(() => canonicalizeWorkingState({ ...createFactoryState("home-office"), room: { widthMm: -0, depthMm: 3000 } } as any)).toThrow();
+    expect(() => canonicalizeWorkingState({ ...createFactoryState("home-office"), furniture: [{ ...createFactoryState("home-office").furniture[0], extra: true }] } as any)).toThrow();
+    const state = createFactoryState("home-office");
+    const proposal = { contractVersion: "1.0.0", baseRevision: 1, baseHash: "a".repeat(64), constraints: state.constraints, optionId: "valid", moves: [{ itemId: "desk-main", pose: { xMm: 1900, yMm: 500, rotationDeg: 0 } }] } as const;
+    expect(() => canonicalizeProposal({ ...proposal, moves: [{ ...proposal.moves[0], pose: { ...proposal.moves[0].pose, yMm: -0 } }] } as any)).toThrow();
+    expect(() => canonicalizeProposal({ ...proposal, extra: true } as any)).toThrow();
   });
 });

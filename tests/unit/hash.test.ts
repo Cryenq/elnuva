@@ -12,8 +12,9 @@ describe("SHA-256 golden hashes", () => {
 
   it("matches proposal digest goldens and binds revision/hash/constraint order", async () => {
     const state = createFactoryState("home-office");
-    const input = { contractVersion: "1.0.0", baseRevision: 1, baseHash: "54314a64f990ba98d9244a679e81d4037fc97c6275936c12e38ec243ca6aeb2e", constraints: state.constraints, optionId: "home-valid", moves: [{ itemId: "desk-main", pose: { xMm: 1900, yMm: 500, rotationDeg: 0 } }] };
-    await expect(proposalDigest(input)).resolves.toBe("0a1cb9ff5ba7bd65c1bdcb478bf53c55dc8c01a1605fe02fc2147151fe0db68f");
-    await expect(proposalDigest({ ...input, baseRevision: 2 })).resolves.not.toBe("0a1cb9ff5ba7bd65c1bdcb478bf53c55dc8c01a1605fe02fc2147151fe0db68f");
+    const baseHash = "54314a64f990ba98d9244a679e81d4037fc97c6275936c12e38ec243ca6aeb2e";
+    const moves = [{ itemId: "desk-main", pose: { xMm: 1900, yMm: 500, rotationDeg: 0 } }] as const;
+    await expect(proposalDigest(1, baseHash, state.constraints, "home-valid", moves)).resolves.toBe("0a1cb9ff5ba7bd65c1bdcb478bf53c55dc8c01a1605fe02fc2147151fe0db68f");
+    await expect(proposalDigest(2, baseHash, state.constraints, "home-valid", moves)).resolves.not.toBe("0a1cb9ff5ba7bd65c1bdcb478bf53c55dc8c01a1605fe02fc2147151fe0db68f");
   });
 });

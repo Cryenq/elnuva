@@ -1,11 +1,93 @@
+import { isValidWorkingState } from "./canonical";
 import { createTemplateState } from "./templates";
 import type { StoredEnvelope, TemplateId, WorkingState } from "./types";
-export const storageKey = (templateId: TemplateId): string => `elnuva:v1:template:${templateId}`;
-export const storageKeyForTemplate = storageKey;
-export interface StorageLike { getItem(key: string): string | null; setItem(key: string, value: string): void; }
-export class MemoryStorage implements StorageLike { private readonly values = new Map<string, string>(); constructor(private readonly options: { setItemError?: boolean } = {}) {} getItem(key: string): string | null { return this.values.get(key) ?? null; } setItem(key: string, value: string): void { if (this.options.setItemError) throw new Error("storage unavailable"); this.values.set(key, value); } }
-export function isWorkingState(value: unknown, templateId?: TemplateId): value is WorkingState { if (typeof value !== "object" || value === null) return false; const s = value as Record<string, unknown>; return s.schemaVersion === 1 && (templateId === undefined || s.templateId === templateId) && typeof s.templateId === "string" && typeof s.room === "object" && Array.isArray(s.features) && Array.isArray(s.furniture) && Array.isArray(s.constraints); }
-export function readSnapshot(storage: StorageLike | null | undefined, templateId: TemplateId): WorkingState { try { const raw = storage?.getItem(storageKey(templateId)); if (!raw) return createTemplateState(templateId); const item = JSON.parse(raw) as StoredEnvelope; return item.storageVersion === 1 && item.templateId === templateId && isWorkingState(item.state, templateId) ? structuredClone(item.state) : createTemplateState(templateId); } catch { return createTemplateState(templateId); } }
-export function saveSnapshot(storage: StorageLike | null | undefined, state: WorkingState): boolean { try { if (!storage) return false; storage.setItem(storageKey(state.templateId), JSON.stringify({ storageVersion: 1, templateId: state.templateId, state } satisfies StoredEnvelope)); return true; } catch { return false; } }
-export const loadTemplateSnapshot = readSnapshot;
-export const saveTemplateSnapshot = saveSnapshot;
+
+export const storageKeyForTemplate = (templateId: TemplateId): string => `elnuva:v1:template:${templateId}`;
+export const storageKey = storageKeyForTemplate;
+
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export class MemoryStorage implements StorageLike {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+}
+
+type PersistenceErrorCode = "INVALID_SNAPSHOT" | "STORAGE_UNAVAILABLE" | "INVALID_STATE";
+type PersistenceError = Readonly<{ code: PersistenceErrorCode; message: string }>;
+
+export type LoadSnapshotResult =
+  | Readonly<{ ok: true; source: "factory" | "saved"; state: WorkingState }>
+  | Readonly<{ ok: false; fallback: true; state: WorkingState; error: PersistenceError }>;
+
+export type SaveSnapshotResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{ ok: false; error: PersistenceError }>;
+
+const fallback = (templateId: TemplateId, error: PersistenceError): LoadSnapshotResult => ({
+  ok: false,
+  fallback: true,
+  state: createTemplateState(templateId),
+  error,
+});
+
+function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+export function loadTemplateSnapshot(storage: StorageLike | null | undefined, templateId: TemplateId): LoadSnapshotResult {
+  if (!storage) return { ok: true, source: "factory", state: createTemplateState(templateId) };
+  let raw: string | null;
+  try {
+    raw = storage.getItem(storageKeyForTemplate(templateId));
+  } catch {
+    return fallback(templateId, { code: "STORAGE_UNAVAILABLE", message: "Saved template data is unavailable." });
+  }
+  if (raw === null) return { ok: true, source: "factory", state: createTemplateState(templateId) };
+
+  try {
+    const envelope: unknown = JSON.parse(raw);
+    if (!hasExactKeys(envelope, ["storageVersion", "templateId", "state"])) {
+      return fallback(templateId, { code: "INVALID_SNAPSHOT", message: "Saved template data was invalid; factory data was loaded." });
+    }
+    if (envelope.storageVersion !== 1 || envelope.templateId !== templateId || !isValidWorkingState(envelope.state, templateId)) {
+      return fallback(templateId, { code: "INVALID_SNAPSHOT", message: "Saved template data was invalid; factory data was loaded." });
+    }
+    return { ok: true, source: "saved", state: structuredClone(envelope.state) };
+  } catch {
+    return fallback(templateId, { code: "INVALID_SNAPSHOT", message: "Saved template data was invalid; factory data was loaded." });
+  }
+}
+
+export function saveTemplateSnapshot(storage: StorageLike | null | undefined, state: WorkingState): SaveSnapshotResult {
+  const templateId = typeof state === "object" && state !== null && "templateId" in state ? state.templateId : undefined;
+  if ((templateId !== "home-office" && templateId !== "bedroom" && templateId !== "study") || !isValidWorkingState(state, templateId)) {
+    return { ok: false, error: { code: "INVALID_STATE", message: "The current template state is invalid and was not saved." } };
+  }
+  if (!storage) {
+    return { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: "Local template storage is unavailable." } };
+  }
+  const envelope: StoredEnvelope = { storageVersion: 1, templateId, state: structuredClone(state) };
+  try {
+    storage.setItem(storageKeyForTemplate(templateId), JSON.stringify(envelope));
+    return { ok: true };
+  } catch {
+    return { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: "The template could not be saved locally." } };
+  }
+}
+
+export const readSnapshot = loadTemplateSnapshot;
+export const saveSnapshot = saveTemplateSnapshot;
+export const isWorkingState = isValidWorkingState;

@@ -159,9 +159,84 @@ export type SubmittedPose = Readonly<{ xMm: number; yMm: number; rotationDeg: nu
 export type Move = Readonly<{ itemId: string; pose: Pose }>;
 export type SubmittedMove = Readonly<{ itemId: string; pose: SubmittedPose }>;
 export type ConstraintResult = Readonly<{ constraintId: string; type: Constraint["type"]; strength: ConstraintStrength; satisfied: boolean; operator: "clear" | "lte" | "gte"; actualMm: number | null; targetMm: number }>;
-export type ValidationIssue = Readonly<{ code: string; path: string; message: string }>;
+export type ValidationIssueCode =
+  | "UNKNOWN_ITEM"
+  | "DUPLICATE_MOVE"
+  | "LOCKED_ITEM_CHANGED"
+  | "INVALID_ROTATION"
+  | "NO_EFFECT_MOVE"
+  | "ITEM_OUT_OF_BOUNDS"
+  | "ITEM_OVERLAP"
+  | "FEATURE_KEEP_OUT_INTERSECTION"
+  | "REQUIRED_CONSTRAINT_UNSATISFIED";
+export type ValidationIssue = Readonly<{ code: ValidationIssueCode; path: string; message: string }>;
 export type StageValidationSummary = Readonly<{ optionId: string; hardValid: true; stageable: true; issues: readonly []; constraintResults: readonly ConstraintResult[]; required: Readonly<{ satisfied: number; total: number }>; preferred: Readonly<{ satisfied: number; total: number }>; movedCount: number; rotatedCount: number; totalMovementMm: number; minimumClearanceMm: number; proposalDigest: string }>;
 export type PreviewState = Readonly<{ status: "pending-review"; baseRevision: number; baseHash: string; optionId: string; moves: readonly Move[]; constraints: readonly Constraint[]; proposalDigest: string; idempotencyKey: string; validation: StageValidationSummary; projectedFurniture: readonly Furniture[]; notApplied: true; notSaved: true; requiresHumanAction: true }>;
 export type StoredEnvelope = Readonly<{ storageVersion: 1; templateId: TemplateId; state: WorkingState }>;
 export type ToolFailureCode = "INVALID_INPUT" | "UNSUPPORTED_CONSTRAINT" | "STATE_UNAVAILABLE" | "REVISION_CONFLICT" | "OPTION_INVALID" | "DIGEST_MISMATCH" | "PENDING_REVIEW" | "IDEMPOTENCY_CONFLICT" | "CANCELLED" | "INTERNAL_ERROR";
 export type ToolResult<T> = Readonly<{ ok: true; data: T }> | Readonly<{ ok: false; error: Readonly<{ code: ToolFailureCode; message: string }> }>;
+
+export type CommandFailureCode =
+  | "INVALID_INPUT"
+  | "STATE_UNAVAILABLE"
+  | "REVISION_CONFLICT"
+  | "OPTION_INVALID"
+  | "PENDING_REVIEW"
+  | "IDEMPOTENCY_CONFLICT"
+  | "STORAGE_UNAVAILABLE"
+  | "NOTHING_TO_UNDO"
+  | "NO_PREVIEW";
+export type CommandResult<T = undefined> =
+  | Readonly<{ ok: true; data: T }>
+  | Readonly<{ ok: false; error: Readonly<{ code: CommandFailureCode; message: string }> }>;
+
+export type StageBinding = Readonly<{
+  idempotencyKey: string;
+  proposalDigest: string;
+  baseRevision: number;
+  baseHash: string;
+}>;
+
+export type StageRequest = Readonly<StageBinding & {
+  constraints: readonly Constraint[];
+  optionId: string;
+  moves: readonly SubmittedMove[];
+}>;
+
+export type StageSuccessData = Readonly<{
+  previewId: string;
+  optionId: string;
+  proposalDigest: string;
+  validation: StageValidationSummary;
+  notApplied: true;
+  notSaved: true;
+  requiresHumanAction: true;
+  allowedHumanActions: readonly ["apply", "discard"];
+}>;
+
+export type VerifiedStageData = Readonly<{
+  optionId: string;
+  proposalDigest: string;
+  moves: readonly Move[];
+  validation: StageValidationSummary;
+  projectedFurniture: readonly Furniture[];
+}>;
+
+export type StageVerificationInput = Readonly<{
+  request: StageRequest;
+  workingState: WorkingState;
+  baseRevision: number;
+  baseHash: string;
+}>;
+
+export type StageVerifier = (input: StageVerificationInput) =>
+  ToolResult<VerifiedStageData> | Promise<ToolResult<VerifiedStageData>>;
+
+export type ProposalProjection = Readonly<{
+  contractVersion: "1.0.0";
+  baseRevision: number;
+  baseHash: string;
+  constraints: readonly Constraint[];
+  optionId: string;
+  moves: readonly SubmittedMove[];
+}>;

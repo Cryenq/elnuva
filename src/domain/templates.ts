@@ -5,6 +5,17 @@ const factories: Record<TemplateId, WorkingState> = {
   bedroom: { schemaVersion: 1, templateId: "bedroom", room: { widthMm: 4200, depthMm: 3600 }, features: [{ id: "door-south", catalogId: "door-900", wall: "south", offsetMm: 300 }, { id: "radiator-north", catalogId: "radiator-900", wall: "north", offsetMm: 2600 }, { id: "window-east", catalogId: "window-1400", wall: "east", offsetMm: 500 }], furniture: [{ id: "bed-main", catalogId: "bed-2000x1600", xMm: 2300, yMm: 2400, rotationDeg: 0, locked: false }, { id: "nightstand-main", catalogId: "nightstand-500x400", xMm: 3550, yMm: 2500, rotationDeg: 0, locked: false }, { id: "wardrobe-main", catalogId: "wardrobe-1200x600", xMm: 700, yMm: 700, rotationDeg: 0, locked: true }], constraints: [{ constraintId: "c-door", type: "door_path_clear", strength: "required", featureId: "door-south", widthMm: 900 }, { constraintId: "c-radiator", type: "feature_distance", strength: "required", itemId: "bed-main", featureId: "radiator-north", relation: "away", thresholdMm: 800 }, { constraintId: "c-window", type: "feature_distance", strength: "preferred", itemId: "bed-main", featureId: "window-east", relation: "near", thresholdMm: 700 }, { constraintId: "c-nightstand", type: "item_distance", strength: "preferred", itemAId: "nightstand-main", itemBId: "bed-main", relation: "near", thresholdMm: 300 }] },
   study: { schemaVersion: 1, templateId: "study", room: { widthMm: 3200, depthMm: 2800 }, features: [{ id: "door-north", catalogId: "door-900", wall: "north", offsetMm: 100 }, { id: "radiator-west", catalogId: "radiator-900", wall: "west", offsetMm: 1500 }, { id: "window-south", catalogId: "window-1400", wall: "south", offsetMm: 900 }], furniture: [{ id: "bookcase-main", catalogId: "bookcase-800x350", xMm: 2700, yMm: 2300, rotationDeg: 0, locked: true }, { id: "chair-main", catalogId: "chair-600x600", xMm: 2000, yMm: 1600, rotationDeg: 0, locked: false }, { id: "table-main", catalogId: "table-1200x800", xMm: 2000, yMm: 900, rotationDeg: 0, locked: false }], constraints: [{ constraintId: "c-door", type: "door_path_clear", strength: "required", featureId: "door-north", widthMm: 800 }, { constraintId: "c-radiator", type: "feature_distance", strength: "required", itemId: "table-main", featureId: "radiator-west", relation: "away", thresholdMm: 700 }, { constraintId: "c-window", type: "feature_distance", strength: "preferred", itemId: "table-main", featureId: "window-south", relation: "near", thresholdMm: 700 }, { constraintId: "c-chair", type: "item_distance", strength: "preferred", itemAId: "chair-main", itemBId: "table-main", relation: "near", thresholdMm: 400 }] },
 };
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  }
+  return value;
+}
+
+for (const factory of Object.values(factories)) deepFreeze(factory);
+
 export const TEMPLATE_IDS: readonly TemplateId[] = Object.freeze(["home-office", "bedroom", "study"]);
 export function createTemplateState(templateId: TemplateId): WorkingState { return structuredClone(factories[templateId]); }
 export const createFactoryState = createTemplateState;

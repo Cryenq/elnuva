@@ -16,6 +16,8 @@ describe("immutable bounded catalogs", () => {
     expect(getFurnitureCatalogEntry("desk-1400x700")).toBe(FURNITURE_CATALOG[0]);
     expect(getFurnitureCatalogEntry("missing" as never)).toBeUndefined();
     expect(Object.isFrozen(FURNITURE_CATALOG)).toBe(true);
+    expect(Object.isFrozen(FURNITURE_CATALOG[0])).toBe(true);
+    expect(Object.isFrozen(FURNITURE_CATALOG[0].allowedRotations)).toBe(true);
   });
 
   it("publishes exact feature spans, physical depths, and hard keep-outs", () => {
@@ -27,5 +29,6 @@ describe("immutable bounded catalogs", () => {
     expect(getFeatureCatalogEntry("radiator-900")).toBe(FEATURE_CATALOG[2]);
     expect(getFeatureCatalogEntry("missing" as never)).toBeUndefined();
     expect(Object.isFrozen(FEATURE_CATALOG)).toBe(true);
+    expect(Object.isFrozen(FEATURE_CATALOG[0])).toBe(true);
   });
 });
