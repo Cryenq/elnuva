@@ -85,10 +85,12 @@ test.describe("T08 templates and persistence", () => {
 
   test("keeps saved and unsaved drafts independent across templates and reload", async ({ page }) => {
     await selectTemplate(page, "bedroom");
-    const bed = row(page, "bed-main");
-    await bed.getByRole("spinbutton", { name: "X position (mm)" }).fill("2700");
-    await bed.getByRole("spinbutton", { name: "Y position (mm)" }).fill("2100");
-    await bed.getByRole("button", { name: "Update furniture" }).click();
+    const nightstand = row(page, "nightstand-main");
+    const bedroomRevision = Number(await summary(page, "Revision").textContent());
+    await nightstand.getByRole("spinbutton", { name: "X position (mm)" }).fill("3950");
+    await nightstand.getByRole("spinbutton", { name: "Y position (mm)" }).fill("2500");
+    await nightstand.getByRole("button", { name: "Update furniture" }).click();
+    await expect(summary(page, "Revision")).toHaveText(String(bedroomRevision + 1));
     await page.getByRole("button", { name: "Save" }).click();
     await selectTemplate(page, "study");
     const chair = row(page, "chair-main");
@@ -98,7 +100,8 @@ test.describe("T08 templates and persistence", () => {
     await page.reload();
     await expect(page.getByRole("combobox", { name: "Room template" })).toHaveValue("home-office");
     await selectTemplate(page, "bedroom");
-    await expect(page.locator('[data-furniture-id="bed-main"]')).toHaveAttribute("data-x-mm", "2700");
+    await expect(page.locator('[data-furniture-id="nightstand-main"]')).toHaveAttribute("data-x-mm", "3950");
+    await expect(page.locator('[data-furniture-id="nightstand-main"]')).toHaveAttribute("data-y-mm", "2500");
     await selectTemplate(page, "study");
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "2000");
   });

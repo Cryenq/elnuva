@@ -22,7 +22,11 @@ test.describe("T08 accessibility and truthful state", () => {
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1, name: "Elnuva" })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Room template" })).toBeVisible();
-    await expect(page.locator('svg[data-room-editor]')).toHaveAttribute("aria-label", /home office.*3600.*3000/i);
+    const editor = page.locator('svg[data-room-editor]');
+    await expect(editor).toHaveAttribute("aria-label", "Room layout editor");
+    await expect(editor).toHaveAttribute("aria-describedby", /\S+/);
+    const descriptionId = await editor.getAttribute("aria-describedby");
+    await expect(page.locator(`#${descriptionId}`)).toContainText(/home office.*3600\s*×\s*3000/i);
     const textState = page.locator("[data-semantic-layout]");
     await expect(textState).toContainText(/chair-main/i);
     await expect(textState).toContainText(/2500.*1300.*0/i);
