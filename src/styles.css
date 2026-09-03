@@ -11,7 +11,7 @@
   --paper: #fffefa;
 }
 * { box-sizing: border-box; }
-body { min-width: 0; min-height: 100vh; margin: 0; }
+body { min-width: 0; min-height: 100vh; margin: 0; background-color: #f4f2ec; }
 [hidden] { display: none !important; }
 button, input, select, textarea { font: inherit; max-width: 100%; }
 button, input, select {
