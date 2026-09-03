@@ -33,7 +33,10 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
       const entry = furnitureCatalogById(item.catalogId)!;
       const box = furnitureAabb(item);
       const ghost = svg("g") as SVGGElement;
-      ghost.dataset.previewFurnitureId = item.id;
+      ghost.dataset.previewItemId = item.id;
+      ghost.dataset.xMm = String(item.xMm);
+      ghost.dataset.yMm = String(item.yMm);
+      ghost.dataset.rotationDeg = String(item.rotationDeg);
       ghost.classList.add("preview-ghost");
       ghost.setAttribute("role", "img");
       ghost.setAttribute("aria-label", `Preview ghost: ${entry.label}`);
