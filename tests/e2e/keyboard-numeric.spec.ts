@@ -102,6 +102,7 @@ test.describe("numeric and keyboard editing", () => {
     const numeric = await freshCapturedPage(browser);
     try {
       const pointerEditor = pointer.page.locator('svg[data-room-editor]');
+      await pointerEditor.scrollIntoViewIfNeeded();
       const start = await roomPointToClient(pointerEditor, 2500, 1300);
       const target = await roomPointToClient(pointerEditor, 2550, 1300);
       await pointer.page.mouse.move(start.x, start.y);
