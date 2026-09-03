@@ -1,6 +1,7 @@
 import { featureCatalogById, furnitureCatalogById, LIMITS } from "./catalog";
 import { aabbsOverlap, featureKeepOutAabb, furnitureAabb, isAabbInsideRoom, rectangleDistanceMm } from "./geometry";
 import { proposalDigest } from "./hash";
+import { canonicalJson } from "./canonical";
 import type {
   Aabb, Constraint, ConstraintResult, Feature, Furniture, Move, RotationDeg,
   StageRequest, StageValidationSummary, StageVerifier, SubmittedMove, ToolFailureCode,
@@ -167,7 +168,7 @@ async function evaluateOption(context: ValidationContext, option: Readonly<{ opt
 export async function validateLayoutOptions(context: ValidationContext, input: unknown): Promise<ToolResult<ValidateLayoutOptionsData>> {
   const decoded = decodeValidate(input); if (!decoded) return fail("INVALID_INPUT"); if (decoded.unsupported) return fail("UNSUPPORTED_CONSTRAINT"); const request = decoded.request!;
   if (request.baseRevision !== context.baseRevision || request.baseHash !== context.baseHash) return fail("REVISION_CONFLICT");
-  if (JSON.stringify(request.constraints) !== JSON.stringify(context.workingState.constraints)) return fail("INVALID_INPUT");
+  if (canonicalJson(request.constraints) !== canonicalJson(context.workingState.constraints)) return fail("INVALID_INPUT");
   const evaluated = await Promise.all(request.options.map((option, index) => evaluateOption(context, option, index))); const results = evaluated.map((entry) => entry.result);
   const ranked = results.filter((r) => r.hardValid).sort((a, b) => Number(b.stageable) - Number(a.stageable) || b.required.satisfied - a.required.satisfied || b.preferred.satisfied - a.preferred.satisfied || a.movedCount - b.movedCount || a.rotatedCount - b.rotatedCount || a.totalMovementMm - b.totalMovementMm || b.minimumClearanceMm - a.minimumClearanceMm || a.inputIndex - b.inputIndex);
   const ranks = new Map(ranked.map((result, index) => [result.inputIndex, index + 1]));
@@ -178,7 +179,7 @@ export async function validateLayoutOptions(context: ValidationContext, input: u
 export async function recomputeStageValidation(context: ValidationContext, input: unknown): Promise<ToolResult<StageValidationSummary>> {
   const decoded = decodeStage(input); if (!decoded) return fail("INVALID_INPUT"); if (decoded.unsupported) return fail("UNSUPPORTED_CONSTRAINT"); const request = decoded.request!;
   if (request.baseRevision !== context.baseRevision || request.baseHash !== context.baseHash) return fail("REVISION_CONFLICT");
-  if (JSON.stringify(request.constraints) !== JSON.stringify(context.workingState.constraints)) return fail("INVALID_INPUT");
+  if (canonicalJson(request.constraints) !== canonicalJson(context.workingState.constraints)) return fail("INVALID_INPUT");
   const digest = await proposalDigest(request.baseRevision, request.baseHash, request.constraints, request.optionId, request.moves); if (digest !== request.proposalDigest) return fail("DIGEST_MISMATCH");
   const evaluated = await evaluateOption(context, { optionId: request.optionId, moves: request.moves }, 0); const result = evaluated.result; if (!result.hardValid || !result.stageable) return fail("OPTION_INVALID");
   return { ok: true, data: { optionId: result.optionId, hardValid: true, stageable: true, issues: [], constraintResults: result.constraintResults, required: result.required, preferred: result.preferred, movedCount: result.movedCount, rotatedCount: result.rotatedCount, totalMovementMm: result.totalMovementMm, minimumClearanceMm: result.minimumClearanceMm, proposalDigest: result.proposalDigest } };
