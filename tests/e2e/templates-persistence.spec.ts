@@ -163,7 +163,7 @@ test.describe("T08 templates and persistence", () => {
     await page.reload(); await preparePrecisionWorkspace(page);
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "1900");
     const beforeReset = Number(await summary(page, "Revision").textContent());
-    await page.getByRole("button", { name: "Reset" }).click();
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "2500");
     await expect(summary(page, "Revision")).toHaveText(String(beforeReset + 1));
     await page.reload(); await preparePrecisionWorkspace(page);

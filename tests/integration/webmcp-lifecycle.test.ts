@@ -223,7 +223,11 @@ class TestElement extends EventTarget {
 
   constructor(readonly tagName: string) { super(); }
   append(...nodes: TestElement[]): void {
-    for (const node of nodes) { node.parentElement = this; this.children.push(node); }
+    for (const node of nodes) {
+      node.parentElement = this;
+      this.children.push(node);
+      if (this.tagName === "select" && this.value === "" && node.tagName === "option") this.value = node.value;
+    }
   }
   replaceChildren(...nodes: Array<TestElement | string>): void {
     for (const child of this.children) child.parentElement = null;
@@ -260,38 +264,79 @@ class TestElement extends EventTarget {
     return found;
   }
   querySelector(selector: string): TestElement | null { return this.querySelectorAll(selector)[0] ?? null; }
+  get ownerSVGElement(): TestElement | null {
+    let parent = this.parentElement;
+    while (parent && parent.tagName !== "svg") parent = parent.parentElement;
+    return parent;
+  }
+  getScreenCTM(): { inverse: () => object } { return { inverse: () => ({}) }; }
+  private readonly captures = new Set<number>();
+  setPointerCapture(pointerId: number): void {
+    this.captures.add(pointerId);
+    this.dispatchEvent(pointerEvent("gotpointercapture", { pointerId }));
+  }
+  hasPointerCapture(pointerId: number): boolean { return this.captures.has(pointerId); }
+  releasePointerCapture(pointerId: number): void {
+    if (this.captures.delete(pointerId)) this.dispatchEvent(pointerEvent("lostpointercapture", { pointerId }));
+  }
 }
 
-async function workspaceHarness() {
+function pointerEvent(type: string, values: Partial<PointerEvent> = {}): PointerEvent {
+  const event = new Event(type, { cancelable: true });
+  for (const [key, value] of Object.entries({ pointerId: 1, button: 0, isPrimary: true, pointerType: "mouse", clientX: 2500, clientY: 1300, ...values })) {
+    Object.defineProperty(event, key, { value });
+  }
+  return event as PointerEvent;
+}
+
+async function workspaceHarness(options: { store?: DomainStore; realPrecision?: boolean } = {}) {
   let drawFromStore!: (value: StoreSnapshot) => void;
   let callbacks!: SpatialViewCallbacks;
   const unsubscribe = vi.fn();
   const updateFurniturePose = vi.fn();
-  const store = {
+  const store = options.store ?? {
     subscribe: vi.fn((listener: (value: StoreSnapshot) => void) => { drawFromStore = listener; return unsubscribe; }),
     updateFurniturePose,
   } as unknown as DomainStore;
   const root = new TestElement("div");
   const spatial = { update: vi.fn(), cancelInteraction: vi.fn(), dispose: vi.fn() };
+  let markMounted!: () => void;
+  const mounted = new Promise<void>(resolve => { markMounted = resolve; });
   const mount = vi.fn((_host: HTMLElement, _state: SpatialViewState, handlers: SpatialViewCallbacks) => {
     callbacks = handlers;
+    markMounted();
     return spatial;
   });
   vi.resetModules();
   vi.stubGlobal("document", {
     createElement: (tag: string) => new TestElement(tag),
+    createElementNS: (_namespace: string, tag: string) => new TestElement(tag),
     activeElement: null,
   });
-  vi.doMock("../../src/ui/render", () => ({ roomSvg: () => new TestElement("svg") }));
-  vi.doMock("../../src/ui/svg-editor", () => ({ startDrag: vi.fn(() => vi.fn()) }));
+  if (options.realPrecision) {
+    vi.doUnmock("../../src/ui/render");
+    vi.doUnmock("../../src/ui/svg-editor");
+    vi.doUnmock("../../src/ui/constraints");
+    // Identity coordinates and capture are deterministic DOM doubles, not
+    // browser/device/GPU evidence. Actual render/startDrag/app/store code runs.
+    vi.stubGlobal("DOMPoint", class {
+      constructor(readonly x: number, readonly y: number) {}
+      matrixTransform(): { x: number; y: number } { return { x: this.x, y: this.y }; }
+    });
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  } else {
+    vi.doMock("../../src/ui/render", () => ({ roomSvg: () => new TestElement("svg") }));
+    vi.doMock("../../src/ui/svg-editor", () => ({ startDrag: vi.fn(() => vi.fn()) }));
+    vi.doMock("../../src/ui/constraints", () => ({ constraintsList: () => new TestElement("section") }));
+  }
   vi.doMock("../../src/ui/inspector", () => ({ inspector: () => new TestElement("section") }));
-  vi.doMock("../../src/ui/constraints", () => ({ constraintsList: () => new TestElement("section") }));
   vi.doMock("../../src/ui/review", () => ({ reviewPanel: () => new TestElement("section") }));
   vi.doMock("../../src/ui/spatial-view", () => ({ mountSpatialView: mount }));
   // workspace-shell itself is deliberately real: no invented host/export shape.
   const { hydrateApp } = await import("../../src/app");
   const app = hydrateApp(root as unknown as HTMLElement, undefined, store);
-  return { app, root, store, unsubscribe, updateFurniturePose, spatial, mount,
+  return { app, root, store, unsubscribe, updateFurniturePose, spatial, mount, mounted,
     emit: (value: StoreSnapshot) => drawFromStore(value),
     callbacks: () => callbacks };
 }
@@ -323,6 +368,138 @@ describe("T06 capability result/draw ordering", () => {
     expect(redrawnStatus?.textContent).toBe(message);
     harness.app.teardown();
     expect(harness.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("T09 synchronous gesture invalidation before delayed snapshot delivery", () => {
+  const control = (root: TestElement, key: string): TestElement => {
+    const nodes = root.querySelectorAll(`[data-focus-key="${key}"]`);
+    expect(nodes, `exactly one real control ${key}`).toHaveLength(1);
+    expect(nodes[0].disabled).toBe(false);
+    return nodes[0];
+  };
+  const submit = (root: TestElement, key: string): void => {
+    let form: TestElement | null = control(root, key);
+    while (form && form.tagName !== "form") form = form.parentElement;
+    expect(form, `${key} belongs to a real form`).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { cancelable: true }));
+  };
+  const cases = [
+    { name: "room update", command: "updateRoom", act: (root: TestElement) => {
+      control(root, "room:width").value = "3650";
+      submit(root, "room:update");
+    } },
+    { name: "catalog furniture addition", command: "addFurniture", act: (root: TestElement) => {
+      control(root, "furniture:catalog").value = "chair-600x600";
+      submit(root, "furniture:add");
+    } },
+    { name: "feature update", command: "updateFeature", act: (root: TestElement) => {
+      control(root, "feature:window-north:offset").value = "1150";
+      submit(root, "feature:window-north:update");
+    } },
+    { name: "feature addition", command: "addFeature", act: (root: TestElement) => {
+      control(root, "feature:new:catalog").value = "window-1400";
+      control(root, "feature:new:wall").value = "south";
+      control(root, "feature:new:offset").value = "100";
+      submit(root, "feature:add");
+    } },
+    { name: "feature deletion", command: "deleteFeature", act: (root: TestElement) => {
+      control(root, "feature:window-spare:delete").click();
+    } },
+    { name: "constraint update", command: "updateConstraint", act: (root: TestElement) => {
+      control(root, "constraint:c-chair:amount").value = "550";
+      submit(root, "constraint:c-chair:update");
+    } },
+    { name: "constraint addition", command: "addConstraint", act: (root: TestElement) => {
+      control(root, "constraint:new:type").value = "door_path_clear";
+      control(root, "constraint:new:type").dispatchEvent(new Event("change"));
+      submit(root, "constraint:add");
+    } },
+    { name: "constraint deletion", command: "deleteConstraint", act: (root: TestElement) => {
+      control(root, "constraint:c-chair:delete").click();
+    } },
+  ] as const;
+
+  it.each(cases)("rejects a held SVG release after $name, before any new snapshot is delivered", async ({ command, act }) => {
+    const persisted = new Map<string, string>([["unrelated-preexisting-key", "preserve"]]);
+    const storage = { getItem: (key: string) => persisted.get(key) ?? null,
+      setItem: vi.fn((key: string, value: string) => { persisted.set(key, value); }) };
+    const data = createDocumentStore({ storage });
+    if (command === "deleteFeature") {
+      expect(data.addFeature({ id: "window-spare", catalogId: "window-1400", wall: "south", offsetMm: 100 }).ok).toBe(true);
+    }
+    const readSnapshot = data.snapshot.bind(data);
+    const before = await readSnapshot();
+    const savedBefore = [...persisted];
+    let hold = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const heldSnapshots: Promise<StoreSnapshot>[] = [];
+    const snapshot = vi.spyOn(data, "snapshot").mockImplementation(() => {
+      const captured = readSnapshot();
+      if (!hold) return captured;
+      const deferred = captured.then(async value => { await gate; return value; });
+      heldSnapshots.push(deferred);
+      return deferred;
+    });
+    const poseCommand = vi.spyOn(data, "updateFurniturePose");
+    const otherCommand = vi.spyOn(data, command);
+    const harness = await workspaceHarness({ store: data, realPrecision: true });
+    await harness.mounted;
+    try {
+      control(harness.root, "view:precision-2d").click();
+      const chair = harness.root.querySelector('[data-furniture-id="chair-main"]');
+      expect(chair).not.toBeNull();
+      chair!.dispatchEvent(pointerEvent("pointerdown"));
+      chair!.dispatchEvent(pointerEvent("pointermove", { clientX: 2550 }));
+      expect(chair!.dataset.xMm).toBe("2550");
+      expect(chair!.hasPointerCapture(1)).toBe(true);
+      expect(poseCommand).not.toHaveBeenCalled();
+
+      // Gate only snapshot delivery. The actual command commits synchronously;
+      // pointerup is deliberately delivered before that snapshot can reach app.
+      hold = true;
+      act(harness.root);
+      expect(otherCommand).toHaveBeenCalledTimes(1);
+      expect(otherCommand.mock.results[0].value).toMatchObject({ ok: true });
+      expect(heldSnapshots).toHaveLength(1);
+      expect(harness.spatial.update.mock.lastCall?.[0].snapshot).toEqual(before);
+      const afterHumanCommand = await readSnapshot();
+      expect(afterHumanCommand.baseRevision).toBe(before.baseRevision + 1);
+      expect(afterHumanCommand.workingState).not.toEqual(before.workingState);
+      expect(afterHumanCommand.workingState.furniture.find(item => item.id === "chair-main"))
+        .toEqual(before.workingState.furniture.find(item => item.id === "chair-main"));
+
+      chair!.dispatchEvent(pointerEvent("pointerup", { clientX: 2550 }));
+      const beforeDelivery = await readSnapshot();
+      // Soft checks preserve all failed-race details and still execute cleanup.
+      expect.soft(poseCommand, "stale gesture must not issue a second mutation").not.toHaveBeenCalled();
+      expect.soft(beforeDelivery).toEqual(afterHumanCommand);
+      expect.soft(beforeDelivery.baseRevision).toBe(before.baseRevision + 1);
+      expect.soft(storage.setItem).not.toHaveBeenCalled();
+      expect.soft([...persisted]).toEqual(savedBefore);
+
+      hold = false;
+      release();
+      await Promise.all(heldSnapshots);
+      await Promise.resolve();
+      expect.soft(await readSnapshot()).toEqual(afterHumanCommand);
+      expect.soft(harness.spatial.update.mock.lastCall?.[0].snapshot).toEqual(afterHumanCommand);
+      const displayedChair = harness.root.querySelector('[data-furniture-id="chair-main"]');
+      expect.soft(displayedChair?.dataset.xMm).toBe("2500");
+      expect.soft(displayedChair?.dataset.yMm).toBe("1300");
+      expect.soft(chair!.hasPointerCapture(1)).toBe(false);
+      expect.soft(storage.setItem).not.toHaveBeenCalled();
+      expect.soft([...persisted]).toEqual(savedBefore);
+    } finally {
+      hold = false;
+      release();
+      await Promise.all(heldSnapshots);
+      harness.app.teardown();
+      snapshot.mockRestore();
+      poseCommand.mockRestore();
+      otherCommand.mockRestore();
+    }
   });
 });
 

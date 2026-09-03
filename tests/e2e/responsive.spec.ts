@@ -163,24 +163,61 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }
     await page.setViewportSize(viewport);
     await openWorkspace(page);
     const template = page.getByRole("combobox", { name: "Room template" });
-    const plan = page.locator("svg[data-room-editor]");
-    const details = await selectFurniture(page, "chair-main");
-    const beforeInDom = await plan.evaluate((node, selector) => {
-      const inspector = document.querySelector(selector);
-      if (!inspector) throw new Error("Selected inspector is missing");
-      return Boolean(node.compareDocumentPosition(inspector) & Node.DOCUMENT_POSITION_FOLLOWING);
-    }, 'form[data-geometry-row][data-item-id="chair-main"]');
-    expect(beforeInDom).toBe(true);
-    const boxes = await Promise.all([template, plan, details].map(locator => locator.boundingBox()));
-    expect(boxes.every(Boolean)).toBe(true);
-    expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
-    expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
+    await selectFurniture(page, "chair-main");
+    // Measure every actual workspace card, including the catalog/scene rail.
+    const cards = page.locator("[data-workspace] > .card");
+    await expect(cards).toHaveCount(3);
+    const cardOrder = await cards.evaluateAll(nodes => nodes.map(node => {
+      const roles = ["layout-card", "controls-card", "details-card"].filter(name => node.classList.contains(name));
+      if (roles.length !== 1) throw new Error("Workspace card must have exactly one known role");
+      const box = node.getBoundingClientRect();
+      return { role: roles[0], top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+    }));
+    expect(cardOrder.map(card => card.role)).toEqual(["layout-card", "controls-card", "details-card"]);
+    expect([...cardOrder].sort((a, b) => a.top - b.top).map(card => card.role)).toEqual(cardOrder.map(card => card.role));
+    for (const card of cardOrder) {
+      expect(card.width).toBeGreaterThan(0);
+      expect(card.height).toBeGreaterThan(0);
+    }
+    expect(cardOrder[0].bottom).toBeLessThanOrEqual(cardOrder[1].top);
+    expect(cardOrder[1].bottom).toBeLessThanOrEqual(cardOrder[2].top);
+    await expect(cards.nth(0).locator("svg[data-room-editor]")).toHaveCount(1);
+    await expect(cards.nth(1).getByRole("combobox", { name: "Add furniture", exact: true })).toHaveCount(1);
+    await expect(cards.nth(1).locator("[data-scene-item-list]")).toHaveCount(1);
+    await expect(cards.nth(1).locator("[data-spatial-item-id]")).toHaveCount(3);
+    await expect(cards.nth(2).locator('form[data-geometry-row][data-item-id="chair-main"]')).toHaveCount(1);
+    await expect(cards.nth(2).locator("details[data-workspace-section]")).toHaveCount(4);
+    // Close disclosures via their real controls so the complete cross-card tab
+    // sequence is explicit and stable, rather than accepting any visible focus.
+    for (const section of ["room", "features", "constraints", "layout-data"]) {
+      const disclosure = page.locator(`details[data-workspace-section="${section}"]`);
+      await expect(disclosure).toHaveJSProperty("open", true);
+      await disclosure.locator(":scope > summary").click();
+      await expect(disclosure).toHaveJSProperty("open", false);
+    }
     await expect(page.locator('[tabindex]:not([tabindex="0"]):not([tabindex="-1"])')).toHaveCount(0);
     await template.focus();
     await expect(template).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(page.locator(":focus")).toBeVisible();
-    await expect(template).not.toBeFocused();
+    const expectedFocusKeys = [
+      "layout:save", "layout:undo", "layout:reset",
+      "view:isometric", "view:top", "view:precision-2d", "view:reset",
+      "plan:furniture:chair-main", "plan:furniture:desk-main", "plan:furniture:storage-main",
+      "furniture:catalog", "furniture:add",
+      "scene:chair-main", "scene:desk-main", "scene:storage-main",
+      "furniture:chair-main:xMm", "furniture:chair-main:yMm", "furniture:chair-main:rotationDeg",
+      "furniture:chair-main:lock", "furniture:chair-main:rotate", "furniture:chair-main:update", "furniture:chair-main:delete",
+      "section:room", "section:features", "section:constraints", "section:layout-data",
+    ];
+    for (const key of expectedFocusKeys) {
+      const target = page.locator(`[data-focus-key="${key}"]`);
+      await expect(target).toHaveCount(1);
+      await page.keyboard.press("Tab");
+      await expect(target, `Tab must reach ${key} in workspace DOM/visual order`).toBeFocused();
+      await expect(target).toBeVisible();
+    }
+    await page.keyboard.press("Enter");
+    await expect(page.locator('details[data-workspace-section="layout-data"]')).toHaveJSProperty("open", true);
+    await expect(page.locator("[data-layout-table]")).toBeVisible();
   });
 
   test(`${viewport.width}px keeps expanded preview review and human controls visible without overflow`, async ({ page }) => {

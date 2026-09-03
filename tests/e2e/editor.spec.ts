@@ -223,6 +223,62 @@ test.describe("precise room editor", () => {
     expect(await revision(page)).toBe(beforeRevision + 1);
   });
 
+  test("restores the complete authoritative SVG pose when Undo has nothing to undo during a held drag", async ({ page }) => {
+    // Captured handlers inspect the actual store; this is not native-client proof.
+    await installToolCapture(page);
+    const editor = await openEditor(page);
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { __elnuvaCapturedTools: Map<string, unknown> }).__elnuvaCapturedTools.has("inspect_spatial_layout"),
+    )).toBe(true);
+    const chair = editor.locator('[data-furniture-id="chair-main"]');
+    const visiblePose = () => chair.evaluate(node => {
+      const shape = (tag: "rect" | "text") => {
+        const child = node.querySelector<SVGGraphicsElement>(tag);
+        if (!child) throw new Error(`Chair ${tag} is missing`);
+        const transform = child.getCTM();
+        if (!transform) throw new Error(`Chair ${tag} CTM is unavailable`);
+        return {
+          x: child.getAttribute("x"), y: child.getAttribute("y"),
+          width: child.getAttribute("width"), height: child.getAttribute("height"),
+          text: child.textContent,
+          matrix: [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f],
+        };
+      };
+      return {
+        xMm: node.getAttribute("data-x-mm"), yMm: node.getAttribute("data-y-mm"),
+        rotationDeg: node.getAttribute("data-rotation-deg"), locked: node.getAttribute("data-locked"),
+        rect: shape("rect"), label: shape("text"),
+      };
+    });
+    const authoritativePose = await visiblePose();
+    expect(authoritativePose).toMatchObject({ xMm: "2500", yMm: "1300", rotationDeg: "0", locked: "false" });
+    const before = await invokeTool(page, "inspect_spatial_layout", {}) as {
+      ok: true; data: { baseRevision: number; baseHash: string; workingState: unknown; preview: unknown };
+    };
+    expect(before).toMatchObject({ ok: true, data: { baseRevision: 1, baseHash: HOME_HASH, preview: { status: "none" } } });
+    const storedBefore = await page.evaluate(() => Object.entries(localStorage).sort(([a], [b]) => a.localeCompare(b)));
+
+    await beginDrag(page, editor, "chair-main", { xMm: 2500, yMm: 1300 }, { xMm: 2550, yMm: 1350 });
+    expect(await visiblePose()).not.toEqual(authoritativePose);
+    const undo = page.getByRole("button", { name: "Undo", exact: true });
+    await undo.focus();
+    await expect(undo).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-editor-status]")).toHaveText("There is no layout change to undo.");
+    expect.soft(await visiblePose()).toEqual(authoritativePose);
+    expect(await invokeTool(page, "inspect_spatial_layout", {})).toEqual(before);
+    expect(await revision(page)).toBe(1);
+    expect(await page.evaluate(() => Object.entries(localStorage).sort(([a], [b]) => a.localeCompare(b)))).toEqual(storedBefore);
+
+    await page.mouse.up();
+    expect.soft(await visiblePose()).toEqual(authoritativePose);
+    await expect(geometryRow(page, "chair-main").getByRole("spinbutton", { name: "X position (mm)" })).toHaveValue("2500");
+    await expect(geometryRow(page, "chair-main").getByRole("spinbutton", { name: "Y position (mm)" })).toHaveValue("1300");
+    expect(await invokeTool(page, "inspect_spatial_layout", {})).toEqual(before);
+    expect(await revision(page)).toBe(1);
+    expect(await page.evaluate(() => Object.entries(localStorage).sort(([a], [b]) => a.localeCompare(b)))).toEqual(storedBefore);
+  });
+
   test("owns one captured pointer and safely cancels both pointercancel and lost capture", async ({ page }) => {
     const editor = await openEditor(page);
     const chair = editor.locator('[data-furniture-id="chair-main"]');
