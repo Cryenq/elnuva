@@ -14,6 +14,11 @@ const FIXTURES = {
   bedroom: { optionId: "bedroom-valid", key: "fixture-bedroom-0001", digest: "ed108b27fb2579fd0984b3f1cc3ab2a658d0d530f8a0f1825971ac9f477f785e", moves: [{ itemId: "bed-main", pose: { xMm: 2700, yMm: 2100, rotationDeg: 0 } }, { itemId: "nightstand-main", pose: { xMm: 3950, yMm: 2500, rotationDeg: 90 } }] },
   study: { optionId: "study-valid", key: "fixture-study-0001", digest: "8492eb42816a0c8d1018410e7a5e16b120051a8166669ca9924a3d65d94fd24f", moves: [{ itemId: "table-main", pose: { xMm: 1500, yMm: 2100, rotationDeg: 0 } }, { itemId: "chair-main", pose: { xMm: 2300, yMm: 1400, rotationDeg: 0 } }] },
 } as const;
+const CONSTRAINT_IDS: Record<TemplateId, readonly string[]> = {
+  "home-office": ["c-door", "c-radiator", "c-window", "c-chair"],
+  bedroom: ["c-door", "c-radiator", "c-window", "c-nightstand"],
+  study: ["c-door", "c-radiator", "c-window", "c-chair"],
+};
 
 async function stageFixture(templateId: TemplateId) {
   const store = createDocumentStore({ stageVerifier: verifyStageRequest });
@@ -31,6 +36,11 @@ describe("T07 real registered-tool preview transaction", () => {
   it.each(Object.keys(FIXTURES) as TemplateId[])("stages %s as an ephemeral, exact human review", async (templateId) => {
     const { store, handlers, before, request, result } = await stageFixture(templateId);
     expect(result).toMatchObject({ ok: true, data: { previewId: request.proposalDigest, optionId: request.optionId, proposalDigest: request.proposalDigest, notApplied: true, notSaved: true, requiresHumanAction: true, allowedHumanActions: ["apply", "discard"] } });
+    if (!result.ok) throw new Error("Stage fixture unexpectedly failed");
+    expect(result.data.validation.required).toStrictEqual({ satisfied: 2, total: 2 });
+    expect(result.data.validation.preferred).toStrictEqual({ satisfied: 2, total: 2 });
+    expect(result.data.validation.constraintResults.map((entry) => entry.constraintId)).toStrictEqual(CONSTRAINT_IDS[templateId]);
+    expect(result.data.validation.constraintResults.every((entry) => typeof entry.satisfied === "boolean" && typeof entry.operator === "string" && typeof entry.targetMm === "number" && (entry.actualMm === null || typeof entry.actualMm === "number"))).toBe(true);
     const after = await handlers.inspect({}, { signal: new AbortController().signal });
     expect(after).toMatchObject({ ok: true, data: { baseRevision: 1, baseHash: request.baseHash, preview: { status: "pending-review", optionId: request.optionId, proposalDigest: request.proposalDigest, notApplied: true, notSaved: true } } });
     expect(after).toMatchObject({ ok: true, data: { workingState: before.ok ? before.data.workingState : undefined } });

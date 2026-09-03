@@ -6,6 +6,11 @@ const moveSets = {
   bedroom: { optionId: "bedroom-valid", key: "fixture-bedroom-0001", moves: [{ itemId: "bed-main", pose: { xMm: 2700, yMm: 2100, rotationDeg: 0 } }, { itemId: "nightstand-main", pose: { xMm: 3950, yMm: 2500, rotationDeg: 90 } }] },
   study: { optionId: "study-valid", key: "fixture-study-0001", moves: [{ itemId: "table-main", pose: { xMm: 1500, yMm: 2100, rotationDeg: 0 } }, { itemId: "chair-main", pose: { xMm: 2300, yMm: 1400, rotationDeg: 0 } }] },
 } as const;
+const constraintResults = {
+  "home-office": ["c-door", "c-radiator", "c-window", "c-chair"],
+  bedroom: ["c-door", "c-radiator", "c-window", "c-nightstand"],
+  study: ["c-door", "c-radiator", "c-window", "c-chair"],
+} as const;
 
 async function installCapture(page: Page) {
   await page.addInitScript(() => {
@@ -51,6 +56,17 @@ test.describe("T07 preview review and human control", () => {
       await expect(page.locator('[data-preview-review] [data-option-id]')).toHaveAttribute("data-option-id", moveSets[template].optionId);
       await expect(page.locator("[data-preview-review]")).toContainText(/Required constraints/i);
       await expect(page.locator("[data-preview-review]")).toContainText(/Preferred constraints/i);
+      await expect(page.locator('[data-preview-review] [data-preview-required]')).toHaveText(/2\/2/);
+      await expect(page.locator('[data-preview-review] [data-preview-preferred]')).toHaveText(/2\/2/);
+      const rows = page.locator('[data-preview-review] [data-preview-constraint-results] [data-constraint-result]');
+      await expect(rows).toHaveCount(constraintResults[template].length);
+      expect(await rows.evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.constraintId)))
+        .toEqual(constraintResults[template]);
+      for (const id of constraintResults[template]) {
+        const row = page.locator(`[data-preview-review] [data-preview-constraint-results] [data-constraint-result][data-constraint-id="${id}"]`);
+        await expect(row).toContainText(new RegExp(id));
+        await expect(row).toContainText(/satisfied/i);
+      }
       await expect(page.locator("[data-preview-review]")).toContainText(/not applied/i);
       await expect(page.locator("[data-preview-review]")).toContainText(/not saved/i);
     });
