@@ -152,3 +152,16 @@ export type InspectSpatialLayoutData = Readonly<{
   }>;
   preview: PreviewSummary;
 }>;
+
+export type Aabb = Readonly<{ left2: number; top2: number; right2: number; bottom2: number }>;
+export type Pose = Readonly<{ xMm: number; yMm: number; rotationDeg: RotationDeg }>;
+export type SubmittedPose = Readonly<{ xMm: number; yMm: number; rotationDeg: number }>;
+export type Move = Readonly<{ itemId: string; pose: Pose }>;
+export type SubmittedMove = Readonly<{ itemId: string; pose: SubmittedPose }>;
+export type ConstraintResult = Readonly<{ constraintId: string; type: Constraint["type"]; strength: ConstraintStrength; satisfied: boolean; operator: "clear" | "lte" | "gte"; actualMm: number | null; targetMm: number }>;
+export type ValidationIssue = Readonly<{ code: string; path: string; message: string }>;
+export type StageValidationSummary = Readonly<{ optionId: string; hardValid: true; stageable: true; issues: readonly []; constraintResults: readonly ConstraintResult[]; required: Readonly<{ satisfied: number; total: number }>; preferred: Readonly<{ satisfied: number; total: number }>; movedCount: number; rotatedCount: number; totalMovementMm: number; minimumClearanceMm: number; proposalDigest: string }>;
+export type PreviewState = Readonly<{ status: "pending-review"; baseRevision: number; baseHash: string; optionId: string; moves: readonly Move[]; constraints: readonly Constraint[]; proposalDigest: string; idempotencyKey: string; validation: StageValidationSummary; projectedFurniture: readonly Furniture[]; notApplied: true; notSaved: true; requiresHumanAction: true }>;
+export type StoredEnvelope = Readonly<{ storageVersion: 1; templateId: TemplateId; state: WorkingState }>;
+export type ToolFailureCode = "INVALID_INPUT" | "UNSUPPORTED_CONSTRAINT" | "STATE_UNAVAILABLE" | "REVISION_CONFLICT" | "OPTION_INVALID" | "DIGEST_MISMATCH" | "PENDING_REVIEW" | "IDEMPOTENCY_CONFLICT" | "CANCELLED" | "INTERNAL_ERROR";
+export type ToolResult<T> = Readonly<{ ok: true; data: T }> | Readonly<{ ok: false; error: Readonly<{ code: ToolFailureCode; message: string }> }>;
