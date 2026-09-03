@@ -6,7 +6,7 @@ import type { InspectSpatialLayoutHandler, StageLayoutPreviewHandler, ValidateLa
 
 const messages: Record<ToolFailureCode, string> = { INVALID_INPUT: "The request is invalid.", UNSUPPORTED_CONSTRAINT: "The request contains an unsupported constraint.", STATE_UNAVAILABLE: "Layout state is unavailable.", REVISION_CONFLICT: "The layout revision or hash has changed.", OPTION_INVALID: "The option is not valid for staging.", DIGEST_MISMATCH: "The proposal digest does not match.", PENDING_REVIEW: "A layout preview is already pending review.", IDEMPOTENCY_CONFLICT: "The idempotency key conflicts with an earlier request.", CANCELLED: "The operation was cancelled.", INTERNAL_ERROR: "The operation could not be completed." };
 const failure = <T>(code: ToolFailureCode): ToolResult<T> => ({ ok: false, error: { code, message: messages[code] } });
-const aborted = (options?: { signal: AbortSignal }) => options?.signal.aborted === true;
+const aborted = (options?: { signal: AbortSignal }) => options?.signal?.aborted === true;
 
 type InspectHandlerDependencies = Readonly<{ readCurrentLayout: () => InspectSpatialLayoutData | null | Promise<InspectSpatialLayoutData | null> }>;
 export function createInspectSpatialLayoutHandler({ readCurrentLayout }: InspectHandlerDependencies): InspectSpatialLayoutHandler {
@@ -29,7 +29,7 @@ export function createValidateLayoutOptionsHandler(store: Pick<DomainStore, "beg
 }
 
 export function createStageLayoutPreviewHandler(store: Pick<DomainStore, "stage">): StageLayoutPreviewHandler {
-  return async (input, options) => { if (aborted(options)) return failure("CANCELLED"); if (!isStageLayoutPreviewInput(input)) return failure("INVALID_INPUT"); try { return await store.stage(input as StageRequest, options.signal); } catch { return failure(aborted(options) ? "CANCELLED" : "INTERNAL_ERROR"); } };
+  return async (input, options) => { if (!isStageLayoutPreviewInput(input)) return failure("INVALID_INPUT"); try { return await store.stage(input as StageRequest, options?.signal); } catch { return failure(aborted(options) ? "CANCELLED" : "INTERNAL_ERROR"); } };
 }
 
 export function createWebMcpHandlers(store: DomainStore): WebMcpHandlers { return { inspect: createInspectSpatialLayoutHandler({ readCurrentLayout: () => store.inspect() }), validate: createValidateLayoutOptionsHandler(store), stage: createStageLayoutPreviewHandler(store) }; }
