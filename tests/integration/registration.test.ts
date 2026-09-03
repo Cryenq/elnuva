@@ -50,6 +50,14 @@ function createInspectHandler() {
   }));
 }
 
+function createCompleteHandlers(inspect = createInspectHandler()) {
+  const unavailable = async () => ({
+    ok: false as const,
+    error: { code: "STATE_UNAVAILABLE" as const, message: "Layout state is unavailable." },
+  });
+  return { inspect, validate: vi.fn(unavailable), stage: vi.fn(unavailable) };
+}
+
 describe("top-level imperative WebMCP registration", () => {
   it("registers exactly one Inspect tool with the locked schema and annotations", async () => {
     const harness = createDocumentHarness();
@@ -57,11 +65,11 @@ describe("top-level imperative WebMCP registration", () => {
 
     const registration = await registerWebMcpTools({
       document: harness.document,
-      inspect,
+      ...createCompleteHandlers(inspect),
     });
 
     expect(registration.status).toBe("registered");
-    expect(harness.registerTool).toHaveBeenCalledTimes(1);
+    expect(harness.registerTool).toHaveBeenCalledTimes(3);
 
     const [tool, options] = harness.registerTool.mock.calls[0];
     expect(tool.name).toBe("inspect_spatial_layout");
@@ -88,7 +96,7 @@ describe("top-level imperative WebMCP registration", () => {
     const inspect = createInspectHandler();
     const registration = await registerWebMcpTools({
       document: harness.document,
-      inspect,
+      ...createCompleteHandlers(inspect),
     });
     const [tool, registrationOptions] = harness.registerTool.mock.calls[0];
     const execution = new AbortController();
@@ -112,23 +120,23 @@ describe("top-level imperative WebMCP registration", () => {
   it("uses one in-flight registration and one lifetime controller per Document", async () => {
     let releaseRegistration!: () => void;
     const registerTool = vi.fn(
-      (_tool: CapturedTool, _options: RegistrationOptions) =>
-        new Promise<undefined>((resolve) => {
-          releaseRegistration = () => resolve(undefined);
-        }),
+      (_tool: CapturedTool, _options: RegistrationOptions) => registerTool.mock.calls.length === 1
+        ? new Promise<undefined>((resolve) => { releaseRegistration = () => resolve(undefined); })
+        : Promise.resolve(undefined),
     );
     const document = { modelContext: { registerTool } } as unknown as Document;
     const inspect = createInspectHandler();
 
-    const firstPending = registerWebMcpTools({ document, inspect });
-    const repeatedPending = registerWebMcpTools({ document, inspect });
+    const complete = createCompleteHandlers(inspect);
+    const firstPending = registerWebMcpTools({ document, ...complete });
+    const repeatedPending = registerWebMcpTools({ document, ...complete });
 
     expect(registerTool).toHaveBeenCalledTimes(1);
     releaseRegistration();
 
     const [first, repeated] = await Promise.all([firstPending, repeatedPending]);
     expect(first).toBe(repeated);
-    expect(registerTool).toHaveBeenCalledTimes(1);
+    expect(registerTool).toHaveBeenCalledTimes(3);
     expect(registerTool.mock.calls[0][1].signal.aborted).toBe(false);
 
     first.teardown();
@@ -138,7 +146,7 @@ describe("top-level imperative WebMCP registration", () => {
     const harness = createDocumentHarness();
     const registration = await registerWebMcpTools({
       document: harness.document,
-      inspect: createInspectHandler(),
+      ...createCompleteHandlers(),
     });
     const signal = harness.registerTool.mock.calls[0][1].signal;
 
@@ -153,7 +161,7 @@ describe("top-level imperative WebMCP registration", () => {
     const harness = createDocumentHarness(pageLifecycle);
     const registration = await registerWebMcpTools({
       document: harness.document,
-      inspect: createInspectHandler(),
+      ...createCompleteHandlers(),
     });
     const signal = harness.registerTool.mock.calls[0][1].signal;
 
@@ -170,24 +178,25 @@ describe("top-level imperative WebMCP registration", () => {
     const firstHarness = createDocumentHarness();
     const secondHarness = createDocumentHarness();
     const inspect = createInspectHandler();
+    const complete = createCompleteHandlers(inspect);
 
     const first = await registerWebMcpTools({
       document: firstHarness.document,
-      inspect,
+      ...complete,
     });
     first.teardown();
 
     const second = await registerWebMcpTools({
       document: secondHarness.document,
-      inspect,
+      ...complete,
     });
     await registerWebMcpTools({
       document: secondHarness.document,
-      inspect,
+      ...complete,
     });
 
-    expect(firstHarness.registerTool).toHaveBeenCalledTimes(1);
-    expect(secondHarness.registerTool).toHaveBeenCalledTimes(1);
+    expect(firstHarness.registerTool).toHaveBeenCalledTimes(3);
+    expect(secondHarness.registerTool).toHaveBeenCalledTimes(3);
     expect(firstHarness.registerTool.mock.calls[0][1].signal).not.toBe(
       secondHarness.registerTool.mock.calls[0][1].signal,
     );
@@ -198,12 +207,15 @@ describe("top-level imperative WebMCP registration", () => {
 
   it("degrades without a modelContext and never invokes the handler", async () => {
     const inspect = createInspectHandler();
+    const complete = createCompleteHandlers(inspect);
     const document = {} as Document;
 
-    const registration = await registerWebMcpTools({ document, inspect });
+    const registration = await registerWebMcpTools({ document, ...complete });
 
     expect(registration.status).toBe("unavailable");
     expect(inspect).not.toHaveBeenCalled();
+    expect(complete.validate).not.toHaveBeenCalled();
+    expect(complete.stage).not.toHaveBeenCalled();
     expect(() => registration.teardown()).not.toThrow();
   });
 });
