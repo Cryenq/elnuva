@@ -7,6 +7,9 @@ import { startDrag } from "./ui/svg-editor";
 import { inspector } from "./ui/inspector";
 import { constraintsList } from "./ui/constraints";
 import { reviewPanel } from "./ui/review";
+import { createWorkspaceShell } from "./ui/workspace-shell";
+import { mountSpatialView } from "./ui/spatial-view";
+import type { SpatialAvailability, SpatialPoseRequest, SpatialViewHandle, SpatialViewMode, SpatialViewState } from "./ui/spatial-view-contract";
 
 type CapabilityState="checking"|"registered"|"unavailable"|"failed";
 export type AppView=Readonly<{setCapabilityStatus:(state:CapabilityState,message:string)=>void;teardown:()=>void}>;
@@ -77,8 +80,333 @@ function addConstraintControls(snapshot:StoreSnapshot,store:DomainStore,status:(
   wrap.append(form,make("p",snapshot.workingState.constraints.length>=LIMITS.maxConstraints?`Maximum ${LIMITS.maxConstraints} constraints reached.`:`${snapshot.workingState.constraints.length} of ${LIMITS.maxConstraints} constraints used.`));return wrap
 }
 
-export function hydrateApp(root:HTMLElement,_fixture?:InspectSpatialLayoutData,supplied?:DomainStore):AppView{const store=supplied??new DomainStore();let snapshot:StoreSnapshot|undefined,selected:string|null=null,message="Ready to edit the room.",surfacedStoreError:string|null=null,capability:HTMLElement|undefined,capabilityState:CapabilityState="checking",capabilityMessage="Checking WebMCP availability…";const status=(value:string)=>{message=value;const node=root.querySelector<HTMLElement>("[data-editor-status]");if(node)node.textContent=value};
-const draw=()=>{if(!snapshot)return;const focusKey=activeFocusKey(root);const errorKey=snapshot.error?`${snapshot.activeTemplateId}:${snapshot.error}`:null;if(snapshot.error&&errorKey!==surfacedStoreError){message=snapshot.error;surfacedStoreError=errorKey}else if(!snapshot.error)surfacedStoreError=null;root.replaceChildren();const shell=make("div");shell.className="app-shell";const header=make("header");header.className="site-header";const eyebrow=make("p","Spatial workspace");eyebrow.className="eyebrow";const title=make("h1","Elnuva");const tagline=make("p","Constraint-aware room planning, with you in control.");tagline.className="tagline";header.append(eyebrow,title,tagline);shell.append(header);const main=make("main");main.className="workspace";
-const left=make("aside");left.className="card controls-card";const templateHeading=make("h2","Templates");const templateLabel=make("label","Room template");const select=keyed(make("select"),"template:active");select.setAttribute("aria-label","Room template");for(const id of Object.keys(names) as TemplateId[]){const option=make("option",names[id]);option.value=id;select.append(option)}select.value=snapshot.activeTemplateId;select.disabled=!!snapshot.preview;select.addEventListener("change",()=>{selected=null;const result=store.activateTemplate(select.value as TemplateId);if(!result.ok)status(result.error.message)});templateLabel.append(select);left.append(templateHeading,templateLabel,roomControls(snapshot,store,status),catalogControls(snapshot,store,status),featureControls(snapshot,store,status));
-const centre=make("section");centre.className="card layout-card";const heading=make("h2",`${names[snapshot.activeTemplateId]} plan`);centre.append(heading);const actions=make("div");actions.className="editor-actions";for(const [labelText,action] of [["Save",()=>store.save()],["Undo",()=>store.undo()],["Reset",()=>store.reset()]] as const){const actionName=labelText.toLowerCase();const button=keyed(make("button",labelText),`layout:${actionName}`);button.type="button";button.dataset.action=actionName;button.disabled=!!snapshot.preview;button.addEventListener("click",()=>{const result=action();status(resultMessage(labelText,result))});actions.append(button)}centre.append(actions);const summary=make("dl");summary.className="layout-summary";for(const [term,value] of [["Template",names[snapshot.activeTemplateId]],["Room",`${snapshot.workingState.room.widthMm} × ${snapshot.workingState.room.depthMm} mm`],["Revision",String(snapshot.baseRevision)],["Furniture",String(snapshot.workingState.furniture.length)],["Features",String(snapshot.workingState.features.length)],["Constraints",String(snapshot.workingState.constraints.length)]]){const div=make("div");div.append(make("dt",term),make("dd",value));summary.append(div)}centre.append(summary,roomSvg(snapshot,selected,{select:id=>{selected=id;draw()},drag:(event,id,node)=>startDrag(event,id,node,snapshot!,store,draw,status)}),reviewPanel(snapshot.preview,{apply:()=>{void store.apply().then(result=>status(result.ok?"Preview applied. It is not saved yet.":result.error.message))},discard:()=>{const result=store.discard();status(result.ok?"Preview discarded. Working layout unchanged.":result.error.message)}}));const notice=keyed(make("p",message),"status:editor");notice.tabIndex=-1;notice.dataset.editorStatus="";notice.setAttribute("role","status");notice.setAttribute("aria-live","polite");notice.setAttribute("aria-atomic","true");centre.append(notice,summaryTable(snapshot));
-const right=make("aside");right.className="card details-card";const furnitureInspector=tagInspectorFocus(inspector(snapshot,{mutate:(id,x,y,r)=>{if(x===""||y===""||r===""){status("Invalid input: every coordinate and rotation is required.");return}if(!whole(x)||!whole(y)||!whole(r)){status("Coordinates and rotation must be whole integers.");return}const item=snapshot!.workingState.furniture.find(value=>value.id===id)!;const pose={xMm:Number(x),yMm:Number(y),rotationDeg:Number(r) as RotationDeg};if(![0,90,180,270].includes(pose.rotationDeg)){status("Rotation must be a quarter turn: 0, 90, 180, or 270 degrees.");return}const candidate={...item,...pose};if(!placementValid(candidate,snapshot!.workingState.room,snapshot!.workingState.furniture,snapshot!.workingState.features)){status("Move rejected: outside bounds, overlap, or radiator keep-out.");return}const result=store.updateFurniturePose(id,pose);status(result.ok?`${id} updated.`:result.error.message)},lock:(id,locked)=>{const result=store.setFurnitureLocked(id,locked);status(result.ok?`${id} ${locked?"locked":"unlocked"}.`:result.error.message)},remove:id=>{const result=store.deleteFurniture(id);status(result.ok?`${id} deleted.`:result.error.message)}}));right.append(furnitureInspector,constraintsList(snapshot,{update:(id,value)=>{const result=store.updateConstraint(id,value);status(result.ok?`${id} updated.`:result.error.message)},remove:id=>{const result=store.deleteConstraint(id);status(result.ok?`${id} deleted.`:result.error.message)}}),addConstraintControls(snapshot,store,status));const agent=make("section");agent.className="capability-panel";agent.append(make("h2","Agent capability"));capability=make("p",capabilityMessage);capability.className="capability-status";capability.dataset.state=capabilityState;capability.setAttribute("role","status");agent.append(capability,make("p","WebMCP may inspect, validate, and stage a preview. Only you can apply, discard, save, or undo."));right.append(agent);main.append(left,centre,right);shell.append(main);const footer=make("footer","Local-first planning aid · Not architectural, accessibility, or safety certification.");footer.className="site-footer";shell.append(footer);root.append(shell);restoreFocus(root,focusKey,!!snapshot.preview)};const unsubscribe=store.subscribe(value=>{snapshot=value;draw()});return Object.freeze({setCapabilityStatus(state,value){capabilityState=state;capabilityMessage=value;if(capability){capability.dataset.state=state;capability.textContent=value}},teardown:unsubscribe})}
+export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutData, supplied?: DomainStore): AppView {
+  const store = supplied ?? new DomainStore();
+  const ui = createWorkspaceShell(root);
+  let snapshot: StoreSnapshot | undefined;
+  let selected: string | null = null;
+  let viewMode: SpatialViewMode = "isometric";
+  let cameraResetVersion = 0;
+  let renderer: SpatialViewHandle | undefined;
+  let availability: SpatialAvailability["state"] = "initializing";
+  let cancelSvg: (() => void) | null = null;
+  let disposed = false;
+  let interactionVersion = 0;
+  let surfacedStoreError: string | null = null;
+  const welcomeTemplates = make("div");
+  welcomeTemplates.className = "welcome-templates";
+  const welcomeButtons: HTMLButtonElement[] = [];
+  for (const id of Object.keys(names) as TemplateId[]) {
+    const button = keyed(make("button", `Use ${names[id]} template`), `welcome:${id}`);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      if (disposed) return;
+      cancelGestures();
+      const result = store.activateTemplate(id);
+      if (result.ok) selected = null;
+      else status(result.error.message);
+    });
+    welcomeButtons.push(button);
+    welcomeTemplates.append(button);
+  }
+  ui.entry.append(welcomeTemplates);
+
+  const status = (value: string) => {
+    if (!disposed) ui.editorStatus.textContent = value;
+  };
+  const cancelGestures = () => {
+    interactionVersion += 1;
+    const cancel = cancelSvg;
+    cancelSvg = null;
+    cancel?.();
+    renderer?.cancelInteraction();
+  };
+  const spatialState = (): SpatialViewState => ({
+    snapshot: snapshot!,
+    selectedItemId: selected,
+    viewMode,
+    cameraResetVersion,
+  });
+  const updateView = () => {
+    ui.shell.dataset.viewMode = viewMode;
+    ui.spatialHost.hidden = viewMode === "precision-2d" || availability === "unavailable";
+    ui.precisionHost.hidden = viewMode !== "precision-2d" && availability === "available";
+    for (const [mode, button] of Object.entries(ui.modeButtons)) {
+      button.setAttribute("aria-pressed", String(mode === viewMode));
+      button.disabled = availability === "unavailable" && mode !== "precision-2d";
+    }
+    if (snapshot) renderer?.update(spatialState());
+  };
+  const changeView = (mode: SpatialViewMode) => {
+    if (disposed || mode === viewMode || (availability === "unavailable" && mode !== "precision-2d")) return;
+    cancelGestures();
+    viewMode = mode;
+    drawPrecision();
+    updateView();
+  };
+  for (const mode of Object.keys(ui.modeButtons) as SpatialViewMode[]) {
+    ui.modeButtons[mode].addEventListener("click", () => changeView(mode));
+  }
+  ui.resetViewButton.addEventListener("click", () => {
+    if (disposed) return;
+    cancelGestures();
+    cameraResetVersion += 1;
+    drawPrecision();
+    updateView();
+  });
+  ui.startButton.addEventListener("click", () => {
+    if (disposed) return;
+    ui.entry.hidden = true;
+    ui.shell.dataset.entered = "true";
+    ui.title.focus({ preventScroll: true });
+  });
+
+  const selectItem = (id: string | null) => {
+    if (disposed || !snapshot || (id !== null && !snapshot.workingState.furniture.some(item => item.id === id))) return;
+    if (selected === id) return;
+    selected = id;
+    draw(true);
+  };
+  const onPoseRequest = async (request: SpatialPoseRequest) => {
+    if (disposed) return;
+    const version = interactionVersion;
+    const current = await store.snapshot();
+    if (disposed || version !== interactionVersion) return;
+    if (current.activeTemplateId !== request.baseTemplateId || current.baseRevision !== request.baseRevision || current.baseHash !== request.baseHash || current.preview) {
+      status("Move canceled: the room changed. Try again with the current layout.");
+      return;
+    }
+    const item = current.workingState.furniture.find(value => value.id === request.itemId);
+    if (!item || item.locked) return;
+    const pose = request.pose;
+    if (![pose.xMm, pose.yMm, pose.rotationDeg].every(Number.isInteger) || ![0, 90, 180, 270].includes(pose.rotationDeg)) {
+      status("Coordinates must be whole millimetres and rotation must be a quarter turn.");
+      return;
+    }
+    if (!placementValid({ ...item, ...pose }, current.workingState.room, current.workingState.furniture, current.workingState.features)) {
+      status("Move rejected: outside bounds, overlap, or radiator keep-out.");
+      return;
+    }
+    const result = store.updateFurniturePose(item.id, pose);
+    status(result.ok ? `${item.id} moved to ${pose.xMm}, ${pose.yMm} mm.` : result.error.message);
+  };
+
+  const drawPrecision = () => {
+    if (disposed || !snapshot) return;
+    ui.precisionHost.replaceChildren(roomSvg(snapshot, selected, {
+      select: selectItem,
+      drag: (event, id, node) => {
+        if (!snapshot || disposed || viewMode !== "precision-2d") return;
+        const cancel = cancelSvg;
+        cancelSvg = null;
+        cancel?.();
+        cancelSvg = startDrag(event, id, node, snapshot, store, () => {
+          cancelSvg = null;
+          if (!disposed) drawPrecision();
+        }, status) ?? null;
+      },
+    }));
+  };
+  const drawSceneList = () => {
+    if (!snapshot) return;
+    const section = make("section");
+    section.className = "scene-list panel-section";
+    section.dataset.sceneItemList = "";
+    section.append(make("h2", "In this room"), make("p", "Select an item to fine-tune its position."));
+    const list = make("ul");
+    for (const item of snapshot.workingState.furniture) {
+      const entry = furnitureCatalogById(item.catalogId)!;
+      const row = make("li");
+      row.dataset.spatialItemId = item.id;
+      row.dataset.xMm = String(item.xMm);
+      row.dataset.yMm = String(item.yMm);
+      row.dataset.rotationDeg = String(item.rotationDeg);
+      row.dataset.locked = String(item.locked);
+      row.classList.toggle("selected", selected === item.id);
+      const button = keyed(make("button"), `scene:${item.id}`);
+      button.type = "button";
+      button.setAttribute("aria-label", `Select ${entry.label} (${item.id})`);
+      button.setAttribute("aria-pressed", String(selected === item.id));
+      const swatch = make("span");
+      swatch.className = "item-swatch";
+      swatch.dataset.kind = entry.kind;
+      swatch.setAttribute("aria-hidden", "true");
+      const label = make("span", entry.label);
+      button.append(swatch, label);
+      button.addEventListener("click", () => selectItem(item.id));
+      const pose = make("p", `${item.xMm}, ${item.yMm} mm · ${item.rotationDeg}°`);
+      pose.className = "item-pose";
+      const identity = make("span", `${item.id} · ${item.locked ? "Locked" : "Editable"}`);
+      identity.className = "item-identity";
+      row.append(button, pose, identity);
+      list.append(row);
+    }
+    section.append(list);
+    if (!snapshot.workingState.furniture.length) section.append(make("p", "No furniture in this layout."));
+    if (snapshot.preview) {
+      const preview = make("div");
+      preview.className = "scene-preview-list";
+      preview.append(make("h3", "Preview — not applied"));
+      for (const move of snapshot.preview.moves) {
+        const item = snapshot.preview.projectedFurniture.find(candidate => candidate.id === move.itemId)!;
+        const row = make("p", `${furnitureCatalogById(item.catalogId)!.label}: ${item.xMm}, ${item.yMm} mm · ${item.rotationDeg}° · Preview — not applied`);
+        row.dataset.spatialPreviewItemId = item.id;
+        row.dataset.xMm = String(item.xMm);
+        row.dataset.yMm = String(item.yMm);
+        row.dataset.rotationDeg = String(item.rotationDeg);
+        preview.append(row);
+      }
+      section.append(preview);
+    }
+    ui.sceneListSlot.replaceChildren(section);
+  };
+  const mutatePose = (id: string, x: string, y: string, r: string) => {
+    if (!snapshot || disposed) return;
+    if (x === "" || y === "" || r === "") { status("Invalid input: every coordinate and rotation is required."); return; }
+    if (!whole(x) || !whole(y) || !whole(r)) { status("Coordinates and rotation must be whole integers."); return; }
+    const item = snapshot.workingState.furniture.find(value => value.id === id);
+    if (!item) return;
+    const pose = { xMm: Number(x), yMm: Number(y), rotationDeg: Number(r) as RotationDeg };
+    if (![0, 90, 180, 270].includes(pose.rotationDeg)) { status("Rotation must be a quarter turn: 0, 90, 180, or 270 degrees."); return; }
+    if (!placementValid({ ...item, ...pose }, snapshot.workingState.room, snapshot.workingState.furniture, snapshot.workingState.features)) {
+      status("Move rejected: outside bounds, overlap, or radiator keep-out."); return;
+    }
+    cancelGestures();
+    const result = store.updateFurniturePose(id, pose);
+    status(result.ok ? `${id} updated.` : result.error.message);
+  };
+
+  const draw = (selectionOnly = false) => {
+    if (!snapshot || disposed) return;
+    const focusKey = activeFocusKey(root);
+    const pending = !!snapshot.preview;
+    for (const button of welcomeButtons) button.disabled = pending;
+    if (selected && !snapshot.workingState.furniture.some(item => item.id === selected)) selected = null;
+    const errorKey = snapshot.error ? `${snapshot.activeTemplateId}:${snapshot.error}` : null;
+    if (snapshot.error && errorKey !== surfacedStoreError) { status(snapshot.error); surfacedStoreError = errorKey; }
+    else if (!snapshot.error) surfacedStoreError = null;
+    ui.title.textContent = `${names[snapshot.activeTemplateId]} plan`;
+    ui.shell.classList.toggle("has-preview", pending);
+    const templateLabel = make("label", "Room template");
+    const templates = keyed(make("select"), "template:active");
+    templates.setAttribute("aria-label", "Room template");
+    for (const id of Object.keys(names) as TemplateId[]) {
+      const option = make("option", names[id]);
+      option.value = id;
+      templates.append(option);
+    }
+    templates.value = snapshot.activeTemplateId;
+    templates.disabled = pending;
+    templates.addEventListener("change", () => {
+      cancelGestures();
+      const result = store.activateTemplate(templates.value as TemplateId);
+      if (result.ok) selected = null;
+      else status(result.error.message);
+    });
+    templateLabel.append(templates);
+    ui.templateSlot.replaceChildren(templateLabel);
+    ui.actionsSlot.replaceChildren();
+    for (const [labelText, action] of [["Save", () => store.save()], ["Undo", () => store.undo()], ["Reset", () => store.reset()]] as const) {
+      const actionName = labelText.toLowerCase();
+      const button = keyed(make("button", labelText), `layout:${actionName}`);
+      button.type = "button";
+      button.dataset.action = actionName;
+      button.disabled = pending;
+      if (labelText === "Save") button.className = "primary-action";
+      button.addEventListener("click", () => {
+        cancelGestures();
+        const result = action();
+        status(resultMessage(labelText, result));
+      });
+      ui.actionsSlot.append(button);
+    }
+    const summary = make("dl");
+    summary.className = "layout-summary";
+    for (const [term, value] of [["Template", names[snapshot.activeTemplateId]], ["Room", `${snapshot.workingState.room.widthMm} × ${snapshot.workingState.room.depthMm} mm`], ["Revision", String(snapshot.baseRevision)], ["Furniture", String(snapshot.workingState.furniture.length)], ["Features", String(snapshot.workingState.features.length)], ["Constraints", String(snapshot.workingState.constraints.length)]]) {
+      const pair = make("div"); pair.append(make("dt", term), make("dd", value)); summary.append(pair);
+    }
+    ui.summarySlot.replaceChildren(summary);
+    ui.catalogSlot.replaceChildren(catalogControls(snapshot, store, status));
+    drawSceneList();
+    ui.inspectorSlot.replaceChildren(tagInspectorFocus(inspector(snapshot, {
+      mutate: mutatePose,
+      rotate: id => {
+        const item = snapshot!.workingState.furniture.find(value => value.id === id);
+        if (item) mutatePose(id, String(item.xMm), String(item.yMm), String((item.rotationDeg + 90) % 360));
+      },
+      lock: (id, locked) => {
+        cancelGestures();
+        const result = store.setFurnitureLocked(id, locked);
+        status(result.ok ? `${id} ${locked ? "locked" : "unlocked"}.` : result.error.message);
+      },
+      remove: id => {
+        cancelGestures();
+        const result = store.deleteFurniture(id);
+        status(result.ok ? `${id} deleted.` : result.error.message);
+      },
+    }, selected)));
+    ui.roomSlot.replaceChildren(roomControls(snapshot, store, status));
+    ui.featuresSlot.replaceChildren(featureControls(snapshot, store, status));
+    ui.constraintsSlot.replaceChildren(constraintsList(snapshot, {
+      update: (id, value) => { const result = store.updateConstraint(id, value); status(result.ok ? `${id} updated.` : result.error.message); },
+      remove: id => { const result = store.deleteConstraint(id); status(result.ok ? `${id} deleted.` : result.error.message); },
+    }), addConstraintControls(snapshot, store, status));
+    ui.layoutDataSlot.replaceChildren(summaryTable(snapshot));
+    ui.reviewSlot.replaceChildren(reviewPanel(snapshot.preview, {
+      apply: () => { cancelGestures(); void store.apply().then(result => status(result.ok ? "Preview applied. It is not saved yet." : result.error.message)); },
+      discard: () => { cancelGestures(); const result = store.discard(); status(result.ok ? "Preview discarded. Working layout unchanged." : result.error.message); },
+    }));
+    if (!selectionOnly && !cancelSvg) drawPrecision();
+    else {
+      for (const item of Array.from(ui.precisionHost.querySelectorAll<SVGGElement>("[data-furniture-id]"))) {
+        const isSelected = item.dataset.furnitureId === selected;
+        item.classList.toggle("selected", isSelected);
+        item.setAttribute("aria-pressed", String(isSelected));
+      }
+    }
+    if (!renderer) {
+      renderer = mountSpatialView(ui.spatialHost, spatialState(), {
+        onSelect: selectItem,
+        onPoseRequest: request => { void onPoseRequest(request); },
+        onAvailabilityChange: value => {
+          if (disposed) return;
+          availability = value.state;
+          ui.spatialStatus.dataset.state = value.state;
+          ui.spatialStatus.textContent = value.message;
+          if (value.state === "unavailable") {
+            cancelGestures();
+            viewMode = "precision-2d";
+            drawPrecision();
+          }
+          updateView();
+        },
+      });
+    }
+    updateView();
+    restoreFocus(root, focusKey, pending);
+  };
+  const unsubscribe = store.subscribe(value => {
+    if (disposed) return;
+    const prior = snapshot;
+    const baseChanged = !prior || prior.activeTemplateId !== value.activeTemplateId || prior.baseRevision !== value.baseRevision || prior.baseHash !== value.baseHash;
+    const previewChanged = JSON.stringify(prior?.preview ?? null) !== JSON.stringify(value.preview);
+    if (baseChanged || previewChanged) cancelGestures();
+    if (prior && prior.activeTemplateId !== value.activeTemplateId) selected = null;
+    snapshot = value;
+    draw();
+  });
+  return Object.freeze({
+    setCapabilityStatus(state, value) {
+      if (disposed) return;
+      ui.capabilityStatus.dataset.state = state;
+      ui.capabilityStatus.textContent = value;
+    },
+    teardown() {
+      if (disposed) return;
+      disposed = true;
+      cancelGestures();
+      unsubscribe();
+      renderer?.dispose();
+    },
+  });
+}
