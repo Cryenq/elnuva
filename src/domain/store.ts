@@ -11,12 +11,15 @@ import {
   type ValidateReservation,
 } from "./preview";
 import { createTemplateState } from "./templates";
+import { assessFitRequest, assessFitTarget } from "./layout-assessment";
+import type { FitAddition, FitInput, FitRequest, HumanFitPreview } from "./fit-contract";
 import type {
   CommandFailureCode,
   CommandResult,
   Constraint,
   Feature,
   Furniture,
+  FurnitureCatalogId,
   InspectSpatialLayoutData,
   PreviewState,
   Room,
@@ -33,7 +36,7 @@ import type {
 type Draft = {
   state: WorkingState;
   revision: number;
-  undo: readonly Furniture[] | null;
+  undo: Readonly<{ kind: "furniture"; furniture: readonly Furniture[] }> | Readonly<{ kind: "human-fit"; state: WorkingState }> | null;
   hashCache: Readonly<{ revision: number; state: WorkingState; value: string }> | null;
 };
 
@@ -42,12 +45,23 @@ export type StoreSnapshot = Readonly<{
   workingState: WorkingState;
   baseRevision: number;
   baseHash: string;
-  preview: PreviewState | null;
+  preview: PreviewState | HumanFitPreview | null;
   error: string | null;
 }>;
 
 type StageToolResult = ToolResult<StageSuccessData>;
 type StageVerifierResult = Awaited<ReturnType<StageVerifier>>;
+type FitReservation = {
+  generation: number;
+  draft: Draft;
+  state: WorkingState;
+  templateId: TemplateId;
+  revision: number;
+  request: FitRequest | null;
+  controller: AbortController;
+  callerSignal: AbortSignal;
+  onAbort: () => void;
+};
 
 const success = <T = undefined>(data: T = undefined as T): CommandResult<T> => ({ ok: true, data });
 const failure = (code: CommandFailureCode, message: string): CommandResult<never> => ({ ok: false, error: { code, message } });
@@ -119,6 +133,10 @@ export class DomainStore {
   private readonly listeners = new Set<(snapshot: StoreSnapshot) => void>();
   private error: string | null = null;
   private emission = 0;
+  private fitGeneration = 0;
+  private fitAdditionSequence = 0;
+  private activeFit: FitReservation | null = null;
+  private humanFitPreview: HumanFitPreview | null = null;
 
   constructor(
     private readonly storage: StorageLike | null = typeof localStorage === "undefined" ? null : localStorage,
@@ -150,7 +168,7 @@ export class DomainStore {
   }
 
   private pending(): CommandResult<never> | null {
-    return this.stageTransactions.hasPreview()
+    return this.stageTransactions.hasPreview() || this.humanFitPreview !== null
       ? failure("PENDING_REVIEW", "Review or discard the pending preview before changing the layout.")
       : null;
   }
@@ -173,11 +191,12 @@ export class DomainStore {
         return failure("OPTION_INVALID", "Locked furniture cannot change pose.");
       }
     }
-    draft.undo = undo === null ? null : structuredClone(undo);
+    draft.undo = undo === null ? null : { kind: "furniture", furniture: structuredClone(undo) };
     draft.state = structuredClone(next);
     draft.revision += 1;
     draft.hashCache = null;
     this.error = null;
+    this.cancelActiveFit();
     this.emit();
     return success();
   }
@@ -197,7 +216,7 @@ export class DomainStore {
     const stateReference = draft.state;
     const baseRevision = draft.revision;
     const workingState = structuredClone(stateReference);
-    const preview = this.stageTransactions.getPreview();
+    const preview = this.humanFitPreview ?? this.stageTransactions.getPreview();
     const error = this.error;
     const cached = draft.hashCache;
     const baseHash = cached && cached.revision === baseRevision && cached.state === stateReference
@@ -219,7 +238,7 @@ export class DomainStore {
   async inspect(): Promise<InspectSpatialLayoutData> {
     const snapshot = await this.snapshot();
     return immutableClone({
-      contractVersion: "1.0.0",
+      contractVersion: "1.1.0",
       baseRevision: snapshot.baseRevision,
       baseHash: snapshot.baseHash,
       workingState: snapshot.workingState,
@@ -237,12 +256,127 @@ export class DomainStore {
     this.error = null;
     this.active = templateId;
     this.initialize(templateId);
+    this.cancelActiveFit();
     this.emit();
     return success();
   }
 
   activate(templateId: TemplateId): CommandResult {
     return this.activateTemplate(templateId);
+  }
+
+  private cancelActiveFit(): void {
+    const active = this.activeFit;
+    this.activeFit = null;
+    this.fitGeneration += 1;
+    if (!active) return;
+    active.callerSignal.removeEventListener("abort", active.onAbort);
+    active.controller.abort();
+  }
+
+  private ownsFit(active: FitReservation): boolean {
+    return this.activeFit === active && this.fitGeneration === active.generation
+      && !active.callerSignal.aborted && !active.controller.signal.aborted
+      && this.active === active.templateId && this.current() === active.draft
+      && active.draft.state === active.state && active.draft.revision === active.revision;
+  }
+
+  createFitAddition(catalogId: FurnitureCatalogId): CommandResult<FitAddition> {
+    const pending = this.pending();
+    if (pending) return pending;
+    const catalog = FURNITURE_CATALOG.find(entry => entry.id === catalogId);
+    if (!catalog || this.current().state.furniture.length >= LIMITS.maxFurniture) return failure("INVALID_INPUT", "No further furniture can be requested.");
+    let id: string;
+    do {
+      if (this.fitAdditionSequence >= Number.MAX_SAFE_INTEGER) return failure("STATE_UNAVAILABLE", "No request identity is available.");
+      id = `fit-${catalog.kind}-${++this.fitAdditionSequence}`;
+    } while (this.current().state.furniture.some(item => item.id === id));
+    return success(immutableClone({ id, catalogId, locked: false as const }));
+  }
+
+  async prepareHumanFit(input: FitInput, callerSignal: AbortSignal): Promise<CommandResult<Readonly<{ request: FitRequest; signal: AbortSignal }>>> {
+    if (callerSignal.aborted) return failure("REVISION_CONFLICT", "The fit request was cancelled.");
+    const pending = this.pending();
+    if (pending) return pending;
+    if (this.stageTransactions.hasActiveReservation()) return failure("PENDING_REVIEW", "A native preview is being prepared.");
+    if (this.activeFit) return failure("IDEMPOTENCY_CONFLICT", "Another fit request is already active.");
+    const draft = this.current();
+    const generation = ++this.fitGeneration;
+    let candidate: FitRequest;
+    try {
+      if (input === null || typeof input !== "object" || Array.isArray(input) || (Object.getPrototypeOf(input) !== Object.prototype && Object.getPrototypeOf(input) !== null) || Reflect.ownKeys(input).length !== 2 || !["targetRoom", "additions"].every(key => {
+        const descriptor = Object.getOwnPropertyDescriptor(input, key);
+        return !!descriptor && descriptor.enumerable === true && "value" in descriptor;
+      })) return failure("INVALID_INPUT", "The fit request is invalid.");
+      // Validate and freeze all input before awaiting its real baseline hash.
+      const decoded = assessFitRequest({ contractVersion: "human-fit/1", requestId: crypto.randomUUID(), generation, templateId: this.active, baseRevision: draft.revision, baseHash: "0".repeat(64), baseline: draft.state, targetRoom: input.targetRoom, additions: input.additions });
+      if (!decoded.ok) return decoded;
+      candidate = decoded.data;
+    } catch { return failure("INVALID_INPUT", "The fit request is invalid."); }
+    const active: FitReservation = {
+      generation, draft, state: draft.state, templateId: this.active, revision: draft.revision,
+      request: null, controller: new AbortController(), callerSignal,
+      onAbort: () => { if (this.activeFit === active) this.cancelActiveFit(); },
+    };
+    this.activeFit = active;
+    callerSignal.addEventListener("abort", active.onAbort, { once: true });
+    if (callerSignal.aborted) { this.cancelActiveFit(); return failure("REVISION_CONFLICT", "The fit request was cancelled."); }
+    try {
+      const snapshot = await this.snapshot();
+      if (!this.ownsFit(active) || snapshot.activeTemplateId !== active.templateId || snapshot.baseRevision !== active.revision || this.humanFitPreview !== null || this.stageTransactions.hasPreview() || this.stageTransactions.hasActiveReservation()) {
+        if (this.activeFit === active) this.cancelActiveFit();
+        return failure("REVISION_CONFLICT", "The layout changed during fit preparation.");
+      }
+      const request = immutableClone({ ...candidate, baseHash: snapshot.baseHash });
+      active.request = request;
+      return success(Object.freeze({ request, signal: active.controller.signal }));
+    } catch {
+      const cancelled = !this.ownsFit(active);
+      if (this.activeFit === active) this.cancelActiveFit();
+      if (cancelled) return failure("REVISION_CONFLICT", "The fit request was cancelled.");
+      return failure("STATE_UNAVAILABLE", "The fit baseline is unavailable.");
+    }
+  }
+
+  async stageHumanFit(request: FitRequest, target: unknown, deadlineAt: number): Promise<CommandResult> {
+    const active = this.activeFit;
+    const expired = () => !Number.isFinite(deadlineAt) || performance.now() >= deadlineAt;
+    if (expired()) return failure("OPTION_INVALID", "The fit deadline has expired.");
+    if (!active || !this.ownsFit(active) || !active.request) return failure("REVISION_CONFLICT", "The fit request is no longer active.");
+    if (this.pending() || this.stageTransactions.hasActiveReservation()) return failure("PENDING_REVIEW", "Another preview owns the document.");
+    let projectedState: WorkingState;
+    let report: ReturnType<typeof assessFitTarget>;
+    try {
+      const decoded = assessFitRequest(request);
+      if (!decoded.ok || canonicalJson(decoded.data) !== canonicalJson(active.request)) return failure("REVISION_CONFLICT", "The fit request does not match the active run.");
+      report = assessFitTarget(active.request, target);
+      if (!report.hardValid || !report.requiredSatisfied) return failure("OPTION_INVALID", "The fit target is invalid.");
+      projectedState = immutableClone(target as WorkingState);
+      assertWorkingState(projectedState, active.templateId);
+      const snapshot = await this.snapshot();
+      if (expired()) return failure("OPTION_INVALID", "The fit deadline has expired.");
+      if (!this.ownsFit(active) || snapshot.baseRevision !== request.baseRevision || snapshot.baseHash !== request.baseHash || snapshot.activeTemplateId !== request.templateId) return failure("REVISION_CONFLICT", "The fit result is stale.");
+    } catch {
+      if (!this.ownsFit(active)) return failure("REVISION_CONFLICT", "The fit result is stale.");
+      return failure("OPTION_INVALID", "The fit target could not be verified.");
+    }
+    const preview = immutableClone({ status: "pending-human-fit" as const, request: active.request, projectedState, assessment: report, notApplied: true as const, notSaved: true as const, requiresHumanAction: true as const });
+    if (expired()) return failure("OPTION_INVALID", "The fit deadline has expired.");
+    if (!this.ownsFit(active) || this.humanFitPreview !== null || this.stageTransactions.hasPreview() || this.stageTransactions.hasActiveReservation() || active.draft.hashCache?.state !== active.state || active.draft.hashCache.revision !== request.baseRevision || active.draft.hashCache.value !== request.baseHash) return failure("REVISION_CONFLICT", "The fit result is stale.");
+    this.humanFitPreview = preview;
+    this.emit();
+    return success();
+  }
+
+  finishHumanFit(requestId: string): void {
+    if (this.activeFit?.request?.requestId === requestId) this.cancelActiveFit();
+  }
+
+  invalidateHumanFit(): void {
+    const hadPreview = this.humanFitPreview !== null;
+    this.humanFitPreview = null;
+    this.cancelActiveFit();
+    if (hadPreview) this.emit();
   }
 
   updateRoom(room: Room): CommandResult {
@@ -346,6 +480,7 @@ export class DomainStore {
     draft.revision += 1;
     draft.hashCache = null;
     this.error = null;
+    this.cancelActiveFit();
     this.emit();
     return success();
   }
@@ -360,6 +495,7 @@ export class DomainStore {
       return failure("STORAGE_UNAVAILABLE", result.error.message);
     }
     this.error = null;
+    this.cancelActiveFit();
     this.emit();
     return success();
   }
@@ -369,7 +505,7 @@ export class DomainStore {
     if (pending) return pending;
     const draft = this.current();
     if (!draft.undo) return failure("NOTHING_TO_UNDO", "There is no layout change to undo.");
-    const next: WorkingState = { ...draft.state, furniture: structuredClone(draft.undo) };
+    const next: WorkingState = draft.undo.kind === "human-fit" ? structuredClone(draft.undo.state) : { ...draft.state, furniture: structuredClone(draft.undo.furniture) };
     try {
       assertWorkingState(next, this.active);
     } catch {
@@ -380,6 +516,7 @@ export class DomainStore {
     draft.revision += 1;
     draft.hashCache = null;
     this.error = null;
+    this.cancelActiveFit();
     this.emit();
     return success();
   }
@@ -394,7 +531,9 @@ export class DomainStore {
   }
 
   private beginStage(binding: StageBinding, signal?: AbortSignal): StageBeginResult<StageToolResult> {
-    return this.stageTransactions.begin(binding, signal);
+    const result = this.stageTransactions.begin(binding, signal, this.humanFitPreview !== null);
+    if (result.kind === "reserved") this.cancelActiveFit();
+    return result;
   }
 
   private cancelStage(reservation: StageReservation<StageToolResult>, result: StageToolResult): StageToolResult {
@@ -512,7 +651,7 @@ export class DomainStore {
         {
           baseRevision: draft.revision,
           baseHash: cachedHash,
-          previewAbsent: !this.stageTransactions.hasPreview(),
+          previewAbsent: !this.stageTransactions.hasPreview() && this.humanFitPreview === null,
           aborted: isAborted(signal),
         },
         { rejected: failureResult, cancelled: cancelledResult },
@@ -584,12 +723,19 @@ export class DomainStore {
   }
 
   discard(): CommandResult {
+    if (this.humanFitPreview !== null) {
+      this.humanFitPreview = null;
+      this.cancelActiveFit();
+      this.emit();
+      return success();
+    }
     if (!this.stageTransactions.clearPreview()) return failure("NO_PREVIEW", "There is no preview to discard.");
     this.emit();
     return success();
   }
 
   async apply(): Promise<CommandResult> {
+    if (this.humanFitPreview !== null) return this.applyHumanFit(this.humanFitPreview);
     const preview = this.stageTransactions.getPreview();
     if (!preview) return failure("NO_PREVIEW", "There is no preview to apply.");
     if (!this.stageVerifier) return failure("STATE_UNAVAILABLE", "The authoritative layout verifier is unavailable.");
@@ -670,12 +816,40 @@ export class DomainStore {
       || canonicalJson(draft.state.constraints) !== canonicalJson(preview.constraints)) {
       return failure("REVISION_CONFLICT", "The layout changed before the preview could be applied.");
     }
-    draft.undo = structuredClone(draft.state.furniture);
+    draft.undo = { kind: "furniture", furniture: structuredClone(draft.state.furniture) };
     draft.state = structuredClone(next);
     draft.revision += 1;
     draft.hashCache = null;
     this.stageTransactions.clearPreview();
     this.error = null;
+    this.cancelActiveFit();
+    this.emit();
+    return success();
+  }
+
+  private async applyHumanFit(preview: HumanFitPreview): Promise<CommandResult> {
+    const request = preview.request;
+    let snapshot: StoreSnapshot;
+    try { snapshot = await this.snapshot(); }
+    catch { return failure("STATE_UNAVAILABLE", "The fit preview could not be verified for Apply."); }
+    if (this.humanFitPreview !== preview || snapshot.activeTemplateId !== request.templateId || snapshot.baseRevision !== request.baseRevision || snapshot.baseHash !== request.baseHash) return failure("REVISION_CONFLICT", "The fit preview changed before Apply.");
+    const report = assessFitTarget(request, preview.projectedState);
+    if (!report.hardValid || !report.requiredSatisfied) return failure("OPTION_INVALID", "The fit preview no longer passes validation.");
+    let next: WorkingState;
+    try {
+      next = structuredClone(preview.projectedState);
+      assertWorkingState(next, request.templateId);
+    } catch { return failure("OPTION_INVALID", "The fit preview violates the document contract."); }
+    const draft = this.current();
+    if (this.humanFitPreview !== preview || this.stageTransactions.hasPreview() || this.stageTransactions.hasActiveReservation() || this.active !== request.templateId || draft.revision !== request.baseRevision || draft.hashCache?.state !== draft.state || draft.hashCache.revision !== request.baseRevision || draft.hashCache.value !== request.baseHash || canonicalJson(draft.state) !== canonicalJson(request.baseline)) return failure("REVISION_CONFLICT", "The fit preview changed before Apply.");
+    // Final identity/base check and commit are synchronous and callback-free.
+    draft.undo = { kind: "human-fit", state: structuredClone(draft.state) };
+    draft.state = next;
+    draft.revision += 1;
+    draft.hashCache = null;
+    this.humanFitPreview = null;
+    this.error = null;
+    this.cancelActiveFit();
     this.emit();
     return success();
   }

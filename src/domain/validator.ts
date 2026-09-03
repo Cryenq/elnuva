@@ -1,9 +1,10 @@
-import { featureCatalogById, furnitureCatalogById, LIMITS } from "./catalog";
+import { furnitureCatalogById, LIMITS } from "./catalog";
+import { evaluateConstraints } from "./layout-assessment";
 import { aabbsOverlap, featureKeepOutAabb, furnitureAabb, isAabbInsideRoom, rectangleDistanceMm } from "./geometry";
 import { proposalDigest } from "./hash";
 import { canonicalJson } from "./canonical";
 import type {
-  Aabb, Constraint, ConstraintResult, Feature, Furniture, Move, RotationDeg,
+  Constraint, ConstraintResult, Furniture, Move, RotationDeg,
   StageRequest, StageValidationSummary, StageVerifier, SubmittedMove, ToolFailureCode,
   ToolResult, ValidationIssue, WorkingState,
 } from "./types";
@@ -79,40 +80,6 @@ function decodeStage(value: unknown): { request?: StageRequest; unsupported?: tr
   const constraints = decodeConstraints(value.constraints); if (!constraints) return null; if (constraints.unsupported) return { unsupported: true };
   const moves = decodeMoves(value.moves); if (!moves) return null;
   return { request: { baseRevision: value.baseRevision, baseHash: value.baseHash, constraints: constraints.value!, optionId: value.optionId, moves, proposalDigest: value.proposalDigest, idempotencyKey: value.idempotencyKey } };
-}
-
-function featurePhysicalAabb(feature: Feature, state: WorkingState): Aabb {
-  const entry = featureCatalogById(feature.catalogId)!; const o = feature.offsetMm * 2; const span = entry.spanMm * 2; const depth = entry.depthMm * 2;
-  if (feature.wall === "north") return { left2: o, right2: o + span, top2: 0, bottom2: depth };
-  if (feature.wall === "south") return { left2: o, right2: o + span, top2: state.room.depthMm * 2 - depth, bottom2: state.room.depthMm * 2 };
-  if (feature.wall === "west") return { left2: 0, right2: depth, top2: o, bottom2: o + span };
-  return { left2: state.room.widthMm * 2 - depth, right2: state.room.widthMm * 2, top2: o, bottom2: o + span };
-}
-
-function doorCorridor(feature: Feature, widthMm: number, state: WorkingState): Aabb | null {
-  const entry = featureCatalogById(feature.catalogId); if (!entry || entry.type !== "door") return null;
-  const center2 = feature.offsetMm * 2 + entry.spanMm; const halfWidth2 = widthMm;
-  if (feature.wall === "north" || feature.wall === "south") {
-    if (center2 - halfWidth2 < 0 || center2 + halfWidth2 > state.room.widthMm * 2) return null;
-    return feature.wall === "north" ? { left2: center2 - halfWidth2, right2: center2 + halfWidth2, top2: 0, bottom2: state.room.depthMm } : { left2: center2 - halfWidth2, right2: center2 + halfWidth2, top2: state.room.depthMm, bottom2: state.room.depthMm * 2 };
-  }
-  if (center2 - halfWidth2 < 0 || center2 + halfWidth2 > state.room.depthMm * 2) return null;
-  return feature.wall === "west" ? { left2: 0, right2: state.room.widthMm, top2: center2 - halfWidth2, bottom2: center2 + halfWidth2 } : { left2: state.room.widthMm, right2: state.room.widthMm * 2, top2: center2 - halfWidth2, bottom2: center2 + halfWidth2 };
-}
-
-function evaluateConstraints(state: WorkingState, furniture: readonly Furniture[]): readonly ConstraintResult[] {
-  const items = new Map(furniture.map((item) => [item.id, item])); const features = new Map(state.features.map((feature) => [feature.id, feature]));
-  return state.constraints.map((constraint): ConstraintResult => {
-    if (constraint.type === "door_path_clear") {
-      const corridor = doorCorridor(features.get(constraint.featureId)!, constraint.widthMm, state);
-      const satisfied = corridor !== null && !furniture.some((item) => aabbsOverlap(furnitureAabb(item), corridor));
-      return { constraintId: constraint.constraintId, type: constraint.type, strength: constraint.strength, satisfied, operator: "clear", actualMm: null, targetMm: constraint.widthMm };
-    }
-    const first = furnitureAabb(items.get(constraint.type === "feature_distance" ? constraint.itemId : constraint.itemAId)!);
-    const second = constraint.type === "feature_distance" ? featurePhysicalAabb(features.get(constraint.featureId)!, state) : furnitureAabb(items.get(constraint.itemBId)!);
-    const actualMm = rectangleDistanceMm(first, second); const operator = constraint.relation === "near" ? "lte" : "gte"; const satisfied = constraint.relation === "near" ? actualMm <= constraint.thresholdMm : actualMm >= constraint.thresholdMm;
-    return { constraintId: constraint.constraintId, type: constraint.type, strength: constraint.strength, satisfied, operator, actualMm, targetMm: constraint.thresholdMm };
-  });
 }
 
 function minimumClearance(state: WorkingState, furniture: readonly Furniture[]): number {

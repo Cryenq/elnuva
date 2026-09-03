@@ -1,7 +1,7 @@
 import type { InspectSpatialLayoutData } from "./types";
 
 const HOME_OFFICE_INSPECT_DATA = {
-  contractVersion: "1.0.0",
+  contractVersion: "1.1.0",
   baseRevision: 1,
   baseHash: "54314a64f990ba98d9244a679e81d4037fc97c6275936c12e38ec243ca6aeb2e",
   workingState: {

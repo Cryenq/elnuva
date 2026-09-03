@@ -1,13 +1,16 @@
 import type { PreviewState, PreviewSummary, StageBinding, StageValidationSummary } from "./types";
+import type { HumanFitPreview } from "./fit-contract";
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,80}$/;
 const HASH = /^[a-f0-9]{64}$/;
 
 export const noPreview = (): PreviewSummary => ({ status: "none" });
 
-export function previewSummary(preview: PreviewState | null): PreviewSummary {
+export function previewSummary(preview: PreviewState | HumanFitPreview | null): PreviewSummary {
   return preview === null
     ? noPreview()
+    : preview.status === "pending-human-fit"
+      ? { status: "pending-human-fit", notApplied: true, notSaved: true, requiresHumanAction: true }
     : { status: "pending-review", optionId: preview.optionId, proposalDigest: preview.proposalDigest, notApplied: true, notSaved: true };
 }
 
@@ -55,7 +58,7 @@ export class StageTransactionBook<T> {
   } | null = null;
   private preview: PreviewState | null = null;
 
-  begin(binding: StageBinding, signal?: Pick<AbortSignal, "aborted">): StageBeginResult<T> {
+  begin(binding: StageBinding, signal?: Pick<AbortSignal, "aborted">, externalPreviewPending = false): StageBeginResult<T> {
     if (!validBinding(binding)) return { kind: "failure", code: "INVALID_INPUT" };
 
     const completed = this.completed.get(binding.idempotencyKey);
@@ -74,7 +77,7 @@ export class StageTransactionBook<T> {
 
     if (signal?.aborted === true) return { kind: "failure", code: "CANCELLED" };
     if (this.completed.size >= 16) return { kind: "failure", code: "STATE_UNAVAILABLE" };
-    if (this.preview !== null) return { kind: "failure", code: "PENDING_REVIEW" };
+    if (this.preview !== null || externalPreviewPending) return { kind: "failure", code: "PENDING_REVIEW" };
 
     let resolve!: (response: T) => void;
     const promise = new Promise<T>((complete) => { resolve = complete; });
@@ -158,6 +161,10 @@ export class StageTransactionBook<T> {
 
   hasPreview(): boolean {
     return this.preview !== null;
+  }
+
+  hasActiveReservation(): boolean {
+    return this.active !== null;
   }
 }
 

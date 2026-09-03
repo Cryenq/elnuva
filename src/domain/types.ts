@@ -111,6 +111,7 @@ export type FeatureCatalogEntry = Readonly<{
 
 export type PreviewSummary =
   | Readonly<{ status: "none" }>
+  | Readonly<{ status: "pending-human-fit"; notApplied: true; notSaved: true; requiresHumanAction: true }>
   | Readonly<{
       status: "pending-review";
       optionId: string;
@@ -120,7 +121,7 @@ export type PreviewSummary =
     }>;
 
 export type InspectSpatialLayoutData = Readonly<{
-  contractVersion: "1.0.0";
+  contractVersion: "1.1.0";
   baseRevision: number;
   baseHash: string;
   workingState: WorkingState;
