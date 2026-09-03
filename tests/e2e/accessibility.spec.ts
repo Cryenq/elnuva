@@ -186,14 +186,16 @@ test.describe("T08 accessibility and truthful state", () => {
     await featureAdd.getByRole("combobox", { name: "Feature type" }).selectOption("window-1400");
     await featureAdd.getByRole("combobox", { name: "Wall", exact: true }).selectOption("south");
     await featureAdd.getByRole("spinbutton", { name: "Offset (mm)" }).fill("400");
+    await expect(page.locator("form[data-feature-id]")).toHaveCount(3);
     await featureAdd.getByRole("button", { name: "Add feature" }).click();
-    const featureId = await page.locator("form[data-feature-id]").last().getAttribute("data-feature-id");
-    expect(featureId).toBeTruthy();
-    const featureDelete = page.locator(`form[data-feature-id="${featureId}"]`);
+    await expect(page.locator("form[data-feature-id]")).toHaveCount(4);
+    const featureDelete = page.locator('form[data-feature-id="window-1"]');
+    await expect(featureDelete).toHaveCount(1);
     const deleteFeature = featureDelete.getByRole("button", { name: "Delete" });
     await deleteFeature.focus();
     await page.keyboard.press("Enter");
     await expect(featureDelete).toHaveCount(0);
+    await expect(page.locator("form[data-feature-id]")).toHaveCount(3);
     await expectMeaningfulFocus(page);
     await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/delet|feature/i);
 
