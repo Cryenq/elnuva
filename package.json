@@ -23,6 +23,8 @@
     "vitest": "4.1.11"
   },
   "dependencies": {
-    "three": "0.185.1"
+    "logic-solver": "2.0.1",
+    "three": "0.185.1",
+    "underscore": "1.13.8"
   }
 }
