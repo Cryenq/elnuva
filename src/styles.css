@@ -119,6 +119,8 @@ label { display: grid; gap: .28rem; color: #405c52; font-size: .82rem; font-weig
 .room-controls button { grid-column: 1/-1; }
 .geometry-row { grid-template-columns: repeat(2,minmax(0,1fr)); border: 1px solid #dce3de; border-radius: .65rem; }
 .inspector form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.inspector > form.geometry-row[data-geometry-row] { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.inspector > form.geometry-row[data-geometry-row] > button { grid-column: 1/-1; }
 .geometry-row h3 { grid-column: 1/-1; }
 .check-label { display: flex; align-items: center; gap: .35rem; min-height: 2.65rem; }
 .check-label input { min-height: auto; }
@@ -257,6 +259,9 @@ thead th {
 .constraint-cue-label { fill:#4e371d; font-size:72px; font-weight:750; paint-order:stroke; stroke:#fffaf0; stroke-width:18; stroke-linejoin:round; text-anchor:middle; }
 .inspector form { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.5rem; align-items:end; margin:.8rem 0; padding:.75rem; border-top:1px solid #dde2dc; }.inspector h3{margin:0;font-size:.9rem}.inspector input{width:100%;min-width:0}.inspector label{font-size:.75rem;color:#52665f}.inspector button{min-width:0;padding:.45rem}.layout-card>label{display:block;font-weight:700}.layout-card>label select{display:block;margin-top:.3rem;max-width:100%}[data-editor-status]{min-height:1.5em;font-weight:650}
 .constraint-references { display:grid; grid-column:1/-1; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
+.constraints > form[data-constraint-row] > label,
+form.add-constraint > label,
+form.add-constraint > .constraint-references > label { grid-template-columns:minmax(0,1fr); }
 .preview-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.65rem; margin:1rem 0; }
 .preview-metrics > div { min-width:0; overflow-wrap:anywhere; }
 .preview-metrics dd { font-size:.95rem; }
