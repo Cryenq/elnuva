@@ -5,15 +5,25 @@ export type ReviewCallbacks = Readonly<{ apply: () => void; discard: () => void 
 
 export function reviewPanel(preview: PreviewState | null, callbacks: ReviewCallbacks): HTMLElement {
   const section = document.createElement("section");
-  section.className = "preview-review"; section.dataset.previewReview = "";
+  section.className = "preview-review";
   const heading = document.createElement("h2"); heading.textContent = "Agent preview review"; section.append(heading);
   if (!preview) { const empty = document.createElement("p"); empty.dataset.previewEmpty = ""; empty.textContent = "No preview pending. Changes are controlled by you."; section.append(empty); return section; }
+  section.dataset.previewReview = "";
   const status = document.createElement("p"); status.className = "preview-trust-status"; status.dataset.previewStatus = "pending-review"; status.dataset.notApplied = "true"; status.dataset.notSaved = "true";
   const state = document.createElement("strong"); state.textContent = "Pending review · Not applied · Not saved"; status.append(state); section.append(status);
   const instruction = document.createElement("p"); instruction.className = "preview-instruction"; instruction.textContent = "Review the staged ghost, then choose Apply or Discard. Only these buttons can resolve this preview."; section.append(instruction);
-  const validation = preview.validation; const metrics = document.createElement("dl"); metrics.className = "preview-metrics";
+  const validation = preview.validation; section.dataset.optionId = validation.optionId; const metrics = document.createElement("dl"); metrics.className = "preview-metrics";
   const addMetric = (term: string, value: string) => { const dt = document.createElement("dt"); dt.textContent = term; const dd = document.createElement("dd"); dd.textContent = value; const item = document.createElement("div"); item.append(dt, dd); metrics.append(item); };
   addMetric("Option", validation.optionId); addMetric("Moved", String(validation.movedCount)); addMetric("Rotated", String(validation.rotatedCount)); addMetric("Movement", `${validation.totalMovementMm} mm`); addMetric("Clearance", `${validation.minimumClearanceMm} mm`); addMetric("Required", `${validation.required.satisfied}/${validation.required.total}`); addMetric("Preferred", `${validation.preferred.satisfied}/${validation.preferred.total}`); addMetric("Validation", validation.hardValid && validation.stageable ? "Valid · stageable" : "Needs attention"); section.append(metrics);
+  const constraints = document.createElement("ul"); constraints.className = "preview-constraints"; constraints.dataset.previewConstraints = "";
+  const constraintLabel = (strength: string) => strength === "required" ? "Required constraints" : "Preferred constraints";
+  for (const result of validation.constraintResults) {
+    const row = document.createElement("li"); row.dataset.constraintId = result.constraintId;
+    const label = document.createElement("strong"); label.textContent = `${constraintLabel(result.strength)} · ${result.type}`;
+    const detail = document.createElement("span"); detail.textContent = ` · ${result.satisfied ? "satisfied" : "not satisfied"} · ${result.operator} · actual ${result.actualMm === null ? "n/a" : `${result.actualMm} mm`} · target ${result.targetMm} mm`;
+    row.append(label, detail); constraints.append(row);
+  }
+  section.append(constraints);
   const moved = document.createElement("ul"); moved.className = "preview-moves"; moved.dataset.previewMoves = "";
   for (const move of preview.moves) { const item = preview.projectedFurniture.find(candidate => candidate.id === move.itemId); const label = item ? furnitureCatalogById(item.catalogId)?.label ?? move.itemId : move.itemId; const li = document.createElement("li"); li.textContent = `${label} → ${move.pose.xMm}, ${move.pose.yMm} mm · ${move.pose.rotationDeg}°`; moved.append(li); } section.append(moved);
   const issues = document.createElement("p"); issues.className = "preview-issues"; issues.dataset.previewIssues = ""; const issueMessages = validation.issues as readonly { message: string }[]; issues.textContent = issueMessages.length === 0 ? "Issues: none" : `Issues: ${issueMessages.map(issue => issue.message).join("; ")}`; section.append(issues);
