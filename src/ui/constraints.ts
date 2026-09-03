@@ -1,0 +1,2 @@
+import type { StoreSnapshot } from "../domain/store";
+export function constraintsList(snapshot: StoreSnapshot): HTMLElement {const s=document.createElement("section");s.dataset.constraintList="";const h=document.createElement("h2");h.textContent="Constraints";s.append(h);for(const c of snapshot.workingState.constraints){const p=document.createElement("p");p.dataset.constraintId=c.constraintId;p.textContent=`${c.constraintId}: ${c.strength} ${c.type}`;s.append(p)}return s;}
