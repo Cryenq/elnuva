@@ -1,6 +1,7 @@
 import type { Furniture } from "../domain/types";
 import type { DomainStore, StoreSnapshot } from "../domain/store";
 import { placementValid } from "../domain/geometry";
+import { assessCandidatePose } from "../domain/layout-assessment";
 
 export function startDrag(event: PointerEvent, itemId: string, node: SVGGElement, snapshot: StoreSnapshot, store: DomainStore, render: () => void, status: (s:string)=>void): (() => void) | undefined {
   if (event.button !== 0 || !event.isPrimary || snapshot.preview) return;
@@ -10,10 +11,29 @@ export function startDrag(event: PointerEvent, itemId: string, node: SVGGElement
   const poseNodes=[node.querySelector("rect")!,node.querySelector("text")!];
   const originalTransforms=poseNodes.map(element=>element.getAttribute("transform"));
   const restorePose=()=>{node.dataset.xMm=String(original.xMm);node.dataset.yMm=String(original.yMm);poseNodes.forEach((element,index)=>{const transform=originalTransforms[index];if(transform==null)element.removeAttribute("transform");else element.setAttribute("transform",transform);});};
+  const feedback=document.createElement("p"); feedback.dataset.placementFeedback=""; feedback.className="placement-feedback"; feedback.setAttribute("aria-live","polite"); feedback.setAttribute("aria-atomic","true"); feedback.hidden=true; svg.parentElement?.append(feedback);
+  const highlights:Element[]=[];
+  const clearFeedback=()=>{feedback.hidden=true;feedback.textContent="";feedback.dataset.placementState="valid";for(const el of highlights)el.removeAttribute("data-placement-obstacle");highlights.length=0;};
+  const showFeedback=()=>{
+    clearFeedback();
+    const assessment=assessCandidatePose(snapshot.workingState,itemId,{xMm:candidate.xMm,yMm:candidate.yMm,rotationDeg:candidate.rotationDeg});
+    const warnings=assessment.constraintResults.filter(result=>!result.satisfied);
+    if(assessment.hardValid&&!warnings.length)return;
+    const state=assessment.hardValid?"warning":"blocked";
+    feedback.dataset.placementState=state; feedback.hidden=false;
+    feedback.textContent=assessment.hardValid?`△ Constraint warning — ${warnings.map(result=>`${result.strength} ${result.constraintId} not satisfied`).join("; ")}. Moving is allowed.`:`⛔ Blocked — ${itemId}: ${assessment.issues.map(issue=>`${issue.message}${issue.featureId?` (${issue.featureId})`:""} ${issue.itemIds.join(", ")}`).join("; ")}`;
+    const mark=(el:Element|null)=>{if(el){el.setAttribute("data-placement-obstacle",state);highlights.push(el);}};
+    mark(node);
+    for(const issue of assessment.issues){
+      for(const id of issue.itemIds)for(const el of Array.from(svg.querySelectorAll<SVGGElement>("[data-furniture-id]")))if(el.dataset.furnitureId===id)mark(el);
+      if(issue.featureId)for(const el of Array.from(svg.querySelectorAll<SVGElement>("[data-feature-id]")))if(el.dataset.featureId===issue.featureId)mark(el);
+      if(issue.code==="ITEM_OUT_OF_BOUNDS")mark(svg.querySelector(".room-boundary"));
+    }
+  };
   let captureMonitor: number | undefined; let captureEstablished = false;
   const point=(e:PointerEvent): {x:number;y:number}|null=>{ try { const matrix=svg.getScreenCTM(); if(!matrix)return null; const p=new DOMPoint(e.clientX,e.clientY).matrixTransform(matrix.inverse()); return Number.isFinite(p.x)&&Number.isFinite(p.y)?{x:p.x,y:p.y}:null; } catch{return null;} };
-  const update=(e:PointerEvent)=>{if(!active||e.pointerId!==event.pointerId)return;const p=point(e);if(!p)return;candidate={...item,xMm:Math.round(p.x/50)*50,yMm:Math.round(p.y/50)*50};node.dataset.xMm=String(candidate.xMm);node.dataset.yMm=String(candidate.yMm);const rect=node.querySelector("rect")!; const dx=candidate.xMm-item.xMm,dy=candidate.yMm-item.yMm;rect.setAttribute("transform",`translate(${dx} ${dy})`);const text=node.querySelector("text")!;text.setAttribute("transform",`translate(${dx} ${dy})`);};
-  const clean=(commit:boolean,silent=false)=>{if(!active)return;active=false;if(captureMonitor!==undefined)cancelAnimationFrame(captureMonitor);node.removeEventListener("pointermove",update);node.removeEventListener("pointerup",up);node.removeEventListener("pointercancel",cancel);node.removeEventListener("lostpointercapture",lost);node.removeEventListener("gotpointercapture",got);svg.removeEventListener("lostpointercapture",lost,true);try{if(node.hasPointerCapture(event.pointerId))node.releasePointerCapture(event.pointerId);}catch{} if(!commit)restorePose(); if(silent)return; if(!commit){render();return;} if(candidate.xMm===original.xMm&&candidate.yMm===original.yMm){render();return;} if(!placementValid(candidate as Furniture,snapshot.workingState.room,snapshot.workingState.furniture,snapshot.workingState.features)){status("Move rejected: outside bounds, overlap, or radiator keep-out.");render();return;} const result=store.updateFurniturePose(itemId,candidate);status(result.ok?`${itemId} moved to ${candidate.xMm}, ${candidate.yMm} mm.`:result.error.message);render();};
+  const update=(e:PointerEvent)=>{if(!active||e.pointerId!==event.pointerId)return;const p=point(e);if(!p)return;candidate={...item,xMm:Math.round(p.x/50)*50,yMm:Math.round(p.y/50)*50};node.dataset.xMm=String(candidate.xMm);node.dataset.yMm=String(candidate.yMm);const rect=node.querySelector("rect")!; const dx=candidate.xMm-item.xMm,dy=candidate.yMm-item.yMm;rect.setAttribute("transform",`translate(${dx} ${dy})`);const text=node.querySelector("text")!;text.setAttribute("transform",`translate(${dx} ${dy})`);showFeedback();};
+  const clean=(commit:boolean,silent=false)=>{if(!active)return;active=false;clearFeedback();if(captureMonitor!==undefined)cancelAnimationFrame(captureMonitor);node.removeEventListener("pointermove",update);node.removeEventListener("pointerup",up);node.removeEventListener("pointercancel",cancel);node.removeEventListener("lostpointercapture",lost);node.removeEventListener("gotpointercapture",got);svg.removeEventListener("lostpointercapture",lost,true);try{if(node.hasPointerCapture(event.pointerId))node.releasePointerCapture(event.pointerId);}catch{} if(!commit)restorePose(); if(silent)return; if(!commit){render();return;} if(candidate.xMm===original.xMm&&candidate.yMm===original.yMm){render();return;} if(!placementValid(candidate as Furniture,snapshot.workingState.room,snapshot.workingState.furniture,snapshot.workingState.features)){status("Move rejected: outside bounds, overlap, or radiator keep-out.");render();return;} const result=store.updateFurniturePose(itemId,candidate);status(result.ok?`${itemId} moved to ${candidate.xMm}, ${candidate.yMm} mm.`:result.error.message);render();};
   const up=(e:PointerEvent)=>{if(e.pointerId===event.pointerId)clean(true)};const cancel=(e:PointerEvent)=>{if(e.pointerId===event.pointerId)clean(false)};const lost=(e:PointerEvent)=>{if(e.pointerId===event.pointerId)clean(false)};const monitorCapture=()=>{if(!active)return;if(captureEstablished&&!node.hasPointerCapture(event.pointerId)){clean(false);return}captureMonitor=requestAnimationFrame(monitorCapture)};const got=()=>{captureEstablished=true}; node.addEventListener("pointermove",update);node.addEventListener("pointerup",up);node.addEventListener("pointercancel",cancel);node.addEventListener("lostpointercapture",lost);node.addEventListener("gotpointercapture",got);svg.addEventListener("lostpointercapture",lost,true);captureMonitor=requestAnimationFrame(monitorCapture);
   return () => clean(false, true);
 }

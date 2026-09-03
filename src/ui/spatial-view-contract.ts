@@ -1,5 +1,6 @@
 import type { StoreSnapshot } from "../domain/store";
 import type { Pose, TemplateId } from "../domain/types";
+import type { CandidatePoseAssessment } from "../domain/fit-contract";
 
 export type SpatialViewMode = "isometric" | "top" | "precision-2d";
 
@@ -28,6 +29,8 @@ export type SpatialViewCallbacks = Readonly<{
   onSelect: (itemId: string | null) => void;
   /** The shell rechecks the live base, preview, lock and placement before committing. */
   onPoseRequest: (request: SpatialPoseRequest) => void;
+  /** Pure shared-domain assessment; transient presentation never writes state. */
+  assessPose: (request: SpatialPoseRequest) => CandidatePoseAssessment;
   onAvailabilityChange: (availability: SpatialAvailability) => void;
 }>;
 

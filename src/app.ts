@@ -9,6 +9,8 @@ import { constraintsList } from "./ui/constraints";
 import { reviewPanel } from "./ui/review";
 import { createWorkspaceShell } from "./ui/workspace-shell";
 import { mountSpatialView } from "./ui/spatial-view";
+import { createFitPanel } from "./ui/fit-panel";
+import { assessCandidatePose } from "./domain/layout-assessment";
 import type { SpatialAvailability, SpatialPoseRequest, SpatialViewHandle, SpatialViewMode, SpatialViewState } from "./ui/spatial-view-contract";
 
 type CapabilityState="checking"|"registered"|"unavailable"|"failed";
@@ -30,7 +32,28 @@ function summaryTable(snapshot:StoreSnapshot):HTMLElement{const section=make("se
 
 function roomControls(snapshot:StoreSnapshot,store:DomainStore,status:(s:string)=>void,beforeCommand:()=>void):HTMLElement{const section=make("section");section.className="panel-section room-controls";const heading=make("h2","Room size");section.append(heading);const form=make("form");const field=(labelText:string,value:number,key:string)=>{const label=make("label",labelText);const input=keyed(make("input"),key);input.type="number";input.min=String(LIMITS.roomMinMm);input.max=String(LIMITS.roomMaxMm);input.step="1";input.value=String(value);input.disabled=!!snapshot.preview;label.append(input);form.append(label);return input};const width=field("Width (mm)",snapshot.workingState.room.widthMm,"room:width"),depth=field("Depth (mm)",snapshot.workingState.room.depthMm,"room:depth");const button=keyed(make("button","Update room"),"room:update");button.type="submit";button.disabled=!!snapshot.preview;form.append(button);form.addEventListener("submit",event=>{event.preventDefault();if(!whole(width.value)||!whole(depth.value)){status("Room dimensions must be whole millimetres.");return}beforeCommand();const result=store.updateRoom({widthMm:Number(width.value),depthMm:Number(depth.value)});status(resultMessage("Room update",result))});section.append(form);return section}
 
-function catalogControls(snapshot:StoreSnapshot,store:DomainStore,status:(s:string)=>void,beforeCommand:()=>void):HTMLElement{const section=make("section");section.className="panel-section catalog-controls";section.setAttribute("aria-labelledby","catalog-heading");const heading=make("h2","Add furniture");heading.id="catalog-heading";section.append(heading);const form=make("form");const label=make("label","Add furniture");const select=keyed(make("select"),"furniture:catalog");select.setAttribute("aria-label","Add furniture");for(const entry of FURNITURE_CATALOG){const option=make("option",`${entry.label} · ${entry.widthMm} × ${entry.depthMm} mm`);option.value=entry.id;select.append(option)}select.disabled=!!snapshot.preview||snapshot.workingState.furniture.length>=LIMITS.maxFurniture;label.append(select);const add=keyed(make("button","Add selected furniture"),"furniture:add");add.type="submit";add.disabled=select.disabled;form.append(label,add);form.addEventListener("submit",event=>{event.preventDefault();const item=findOpenPose(snapshot,select.value as FurnitureCatalogId);if(!item){status("No valid open position is available for that item.");return}beforeCommand();const result=store.addFurniture(item);status(result.ok?`${furnitureCatalogById(item.catalogId)!.label} added.${snapshot.workingState.furniture.length+1>=LIMITS.maxFurniture?` Maximum ${LIMITS.maxFurniture} furniture items reached.`:""}`:result.error.message)});section.append(form,make("p",snapshot.workingState.furniture.length>=LIMITS.maxFurniture?`Furniture limit reached (${LIMITS.maxFurniture} of ${LIMITS.maxFurniture}).`:`${snapshot.workingState.furniture.length} of ${LIMITS.maxFurniture} furniture items used.`));return section}
+function catalogControls(snapshot:StoreSnapshot,store:DomainStore,status:(s:string)=>void,beforeCommand:()=>void,requestFit:(id:FurnitureCatalogId)=>void):HTMLElement {
+  const section=make("section"); section.className="panel-section catalog-controls"; section.setAttribute("aria-labelledby","catalog-heading");
+  const heading=make("h2","Add furniture"); heading.id="catalog-heading"; section.append(heading);
+  const form=make("form"), label=make("label","Add furniture"), select=keyed(make("select"),"furniture:catalog"); select.setAttribute("aria-label","Add furniture");
+  for(const entry of FURNITURE_CATALOG){const option=make("option",`${entry.label} · ${entry.widthMm} × ${entry.depthMm} mm`);option.value=entry.id;select.append(option)}
+  select.disabled=!!snapshot.preview||snapshot.workingState.furniture.length>=LIMITS.maxFurniture;label.append(select);
+  const add=keyed(make("button","Add selected furniture"),"furniture:add"); add.type="submit";add.disabled=select.disabled;
+  const alternative=make("div");
+  const offerRequest=(id:FurnitureCatalogId)=>{
+    const button=make("button","Request this furniture for Make it Fit");button.type="button";button.disabled=!!snapshot.preview;
+    button.addEventListener("click",()=>requestFit(id));
+    alternative.replaceChildren(make("p",`${furnitureCatalogById(id)!.label} could not be placed. You can explicitly request it in a new arrangement.`),button);
+  };
+  form.append(label,add);form.addEventListener("submit",event=>{
+    event.preventDefault(); const id=select.value as FurnitureCatalogId; const item=findOpenPose(snapshot,id);
+    if(!item){status("No valid open position is available for that item.");offerRequest(id);return}
+    beforeCommand();const result=store.addFurniture(item);
+    status(result.ok?`${furnitureCatalogById(item.catalogId)!.label} added.${snapshot.workingState.furniture.length+1>=LIMITS.maxFurniture?` Maximum ${LIMITS.maxFurniture} furniture items reached.`:""}`:result.error.message);
+    if(!result.ok)offerRequest(id);
+  });
+  section.append(form,make("p",snapshot.workingState.furniture.length>=LIMITS.maxFurniture?`Furniture limit reached (${LIMITS.maxFurniture} of ${LIMITS.maxFurniture}).`:`${snapshot.workingState.furniture.length} of ${LIMITS.maxFurniture} furniture items used.`),alternative);return section;
+}
 
 function featureControls(snapshot:StoreSnapshot,store:DomainStore,status:(s:string)=>void,beforeCommand:()=>void):HTMLElement{
   const section=make("section");section.className="panel-section feature-controls";const heading=make("h2","Wall features");section.append(heading);
@@ -121,6 +144,8 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
     cancel?.();
     renderer?.cancelInteraction();
   };
+  const fitPanel = createFitPanel(store, cancelGestures);
+  ui.fitSlot.append(fitPanel.element);
   const spatialState = (): SpatialViewState => ({
     snapshot: snapshot!,
     selectedItemId: selected,
@@ -246,10 +271,20 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
       const preview = make("div");
       preview.className = "scene-preview-list";
       preview.append(make("h3", "Preview — not applied"));
-      for (const move of snapshot.preview.moves) {
-        const item = snapshot.preview.projectedFurniture.find(candidate => candidate.id === move.itemId)!;
+      const pendingPreview = snapshot.preview;
+      const items = pendingPreview.status === "pending-human-fit" ? pendingPreview.projectedState.furniture : pendingPreview.projectedFurniture.filter(item => pendingPreview.moves.some(move => move.itemId === item.id));
+      if (snapshot.preview.status === "pending-human-fit") {
+        const target = snapshot.preview.projectedState.room;
+        const room = make("p", `Target room: ${target.widthMm} × ${target.depthMm} mm · Original working room remains unchanged.`);
+        room.dataset.fitTargetRoom = ""; room.dataset.widthMm = String(target.widthMm); room.dataset.depthMm = String(target.depthMm); preview.append(room);
+      }
+      for (const item of items) {
         const row = make("p", `${furnitureCatalogById(item.catalogId)!.label}: ${item.xMm}, ${item.yMm} mm · ${item.rotationDeg}° · Preview — not applied`);
-        row.dataset.spatialPreviewItemId = item.id;
+        if (snapshot.preview.status === "pending-human-fit") {
+          const entry = furnitureCatalogById(item.catalogId)!;
+          row.dataset.fitPreviewItemId = item.id; row.dataset.widthMm = String(entry.widthMm); row.dataset.depthMm = String(entry.depthMm);
+          row.textContent += ` · ${item.id} · ${entry.widthMm} × ${entry.depthMm} mm`;
+        } else row.dataset.spatialPreviewItemId = item.id;
         row.dataset.xMm = String(item.xMm);
         row.dataset.yMm = String(item.yMm);
         row.dataset.rotationDeg = String(item.rotationDeg);
@@ -325,7 +360,8 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
       const pair = make("div"); pair.append(make("dt", term), make("dd", value)); summary.append(pair);
     }
     ui.summarySlot.replaceChildren(summary);
-    ui.catalogSlot.replaceChildren(catalogControls(snapshot, store, status, cancelGestures));
+    fitPanel.update(snapshot);
+    ui.catalogSlot.replaceChildren(catalogControls(snapshot, store, status, cancelGestures, fitPanel.request));
     drawSceneList();
     ui.inspectorSlot.replaceChildren(tagInspectorFocus(inspector(snapshot, {
       mutate: mutatePose,
@@ -352,7 +388,7 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
     }), addConstraintControls(snapshot, store, status, cancelGestures));
     ui.layoutDataSlot.replaceChildren(summaryTable(snapshot));
     ui.reviewSlot.replaceChildren(reviewPanel(snapshot.preview, {
-      apply: () => { cancelGestures(); void store.apply().then(result => status(result.ok ? "Preview applied. It is not saved yet." : result.error.message)); },
+      apply: () => { const targetRoom = snapshot?.preview?.status === "pending-human-fit" ? snapshot.preview.projectedState.room : null; cancelGestures(); void store.apply().then(result => { if (disposed) return; if (result.ok && targetRoom) fitPanel.applied(targetRoom); status(result.ok ? "Preview applied. It is not saved yet." : result.error.message); }); },
       discard: () => { cancelGestures(); const result = store.discard(); status(result.ok ? "Preview discarded. Working layout unchanged." : result.error.message); },
     }));
     if (!selectionOnly && !cancelSvg) drawPrecision();
@@ -367,6 +403,10 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
       renderer = mountSpatialView(ui.spatialHost, spatialState(), {
         onSelect: selectItem,
         onPoseRequest: request => { void onPoseRequest(request); },
+        assessPose: request => {
+          if (!snapshot || disposed || snapshot.preview || snapshot.activeTemplateId !== request.baseTemplateId || snapshot.baseRevision !== request.baseRevision || snapshot.baseHash !== request.baseHash) return { hardValid: false, issues: [{ code: "INVALID_REQUEST", itemIds: [request.itemId], message: "The layout changed; cancel this move and try again." }], constraintResults: [] };
+          return assessCandidatePose(snapshot.workingState, request.itemId, request.pose);
+        },
         onAvailabilityChange: value => {
           if (disposed) return;
           availability = value.state;
@@ -405,6 +445,7 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
       disposed = true;
       cancelGestures();
       unsubscribe();
+      fitPanel.dispose();
       renderer?.dispose();
     },
   });

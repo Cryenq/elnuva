@@ -209,3 +209,27 @@ th { color: #50654f; font-size: .65rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
+
+.fit-panel { margin-top: 1rem; border-top: 1px solid #d1d3c6; }
+.fit-panel summary { padding-block: .85rem; font-weight: 750; cursor: pointer; }
+.fit-form, .fit-request-list { display: grid; gap: .75rem; min-width: 0; }
+.fit-form label { display: grid; gap: .35rem; min-width: 0; }
+.fit-form input, .fit-form select, .fit-form button { min-width: 0; width: 100%; max-width: 100%; }
+.fit-request-list { padding: 0; list-style: none; }
+.fit-request-list li { display: grid; gap: .4rem; padding: .65rem; background: #f2eee2; border: 1px dashed #9c8054; border-radius: .4rem; }
+.fit-request-list span, .fit-request-list strong, .fit-request-list button, .fit-status, .human-fit-review { overflow-wrap: anywhere; }
+.fit-request-list span, .fit-request-note { font-size: .78rem; }
+.fit-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.fit-actions button { flex: 1 1 100px; }
+.fit-status { font-size: .82rem; padding: .7rem; border-left: 3px solid #71836a; background: #f3f2e9; }
+.fit-status[data-fit-state="RUNNING"] { border-color: #97601c; }
+.fit-target-room { fill: #d9af6420; stroke: #956021; stroke-width: 28; stroke-dasharray: 90 50; pointer-events: none; }
+.fit-target-label { fill: #754b1d; font-size: 72px; pointer-events: none; }
+.placement-feedback { margin: .6rem 0 0; padding: .65rem; border: 2px dashed currentColor; border-radius: .35rem; background: #fffaf3; font-size: .8rem; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; pointer-events: none; }
+.placement-feedback[data-placement-state="blocked"] { color: #b8302b; }
+.placement-feedback[data-placement-state="warning"] { color: #79500f; }
+.spatial-host { position: relative; }
+.spatial-placement-feedback { position: absolute; z-index: 2; bottom: .6rem; left: .6rem; right: .6rem; }
+[data-placement-obstacle="blocked"], [data-placement-obstacle="blocked"] rect { stroke: #b8302b !important; stroke-width: 34; stroke-dasharray: 60 30; }
+[data-placement-obstacle="warning"], [data-placement-obstacle="warning"] rect { stroke: #865512 !important; stroke-width: 28; stroke-dasharray: 45 30; }
+.human-fit-review h2 { line-height: 1.35; }

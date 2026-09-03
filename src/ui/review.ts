@@ -1,9 +1,44 @@
 import { furnitureCatalogById } from "../domain/catalog";
-import type { PreviewState } from "../domain/types";
+import type { StoreSnapshot } from "../domain/store";
+import type { HumanFitPreview } from "../domain/fit-contract";
 
 export type ReviewCallbacks = Readonly<{ apply: () => void; discard: () => void }>;
 
-export function reviewPanel(preview: PreviewState | null, callbacks: ReviewCallbacks): HTMLElement {
+function humanFitReview(preview: HumanFitPreview, callbacks: ReviewCallbacks): HTMLElement {
+  const make = <K extends keyof HTMLElementTagNameMap>(tag: K, text = "") => { const el = document.createElement(tag); el.textContent = text; return el; };
+  const section = make("section"); section.className = "preview-review human-fit-review"; section.dataset.humanFitPreview = "";
+  section.dataset.notApplied = "true"; section.dataset.notSaved = "true";
+  section.append(make("h2", "Make it Fit preview — Not applied — Not saved"));
+  const old = preview.request.baseline.room, target = preview.projectedState.room;
+  const room = make("p", `Original room ${old.widthMm} × ${old.depthMm} mm → Target room ${target.widthMm} × ${target.depthMm} mm.`);
+  section.append(room, make("p", "The solid room is your unchanged working reference. Dashed and translucent shapes show the complete target. Apply once to replace the room and inventory; Save remains a separate action."));
+  section.append(make("h3", `${preview.request.additions.length} requested additions`));
+  const additions = make("ul");
+  for (const item of preview.request.additions) { const entry = furnitureCatalogById(item.catalogId)!; additions.append(make("li", `${entry.label} · ${item.id} · ${entry.widthMm} × ${entry.depthMm} mm · Requested — not placed`)); }
+  if (!preview.request.additions.length) additions.append(make("li", "No additions. All existing furniture is retained at its full size."));
+  section.append(additions);
+  const counts = preview.assessment;
+  section.append(make("p", `Required constraints: ${counts.required.satisfied}/${counts.required.total}. Preferred constraints: ${counts.preferred.satisfied}/${counts.preferred.total}.`));
+  const constraints = make("ul"); constraints.className = "preview-constraints";
+  for (const result of counts.constraintResults) {
+    const row = make("li", `${result.strength === "required" ? "Required" : "Preferred"} · ${result.constraintId} · ${result.type} · ${result.satisfied ? "satisfied" : "not satisfied"} · ${result.operator} · actual ${result.actualMm === null ? "n/a" : `${result.actualMm} mm`} · target ${result.targetMm} mm`);
+    row.dataset.constraintId = result.constraintId; constraints.append(row);
+  }
+  section.append(constraints, make("h3", "Complete target furniture"));
+  const poses = make("ul"); poses.className = "preview-moves";
+  for (const item of preview.projectedState.furniture) {
+    const entry = furnitureCatalogById(item.catalogId)!;
+    poses.append(make("li", `${entry.label} · ${item.id} · ${entry.widthMm} × ${entry.depthMm} mm → ${item.xMm}, ${item.yMm} mm · ${item.rotationDeg}° · ${item.locked ? "Locked, unchanged" : "Editable after Apply"}`));
+  }
+  section.append(poses);
+  const actions = make("div"); actions.className = "preview-actions";
+  const apply = make("button", "Apply preview"); apply.type = "button"; apply.dataset.previewApply = ""; apply.dataset.focusKey = "preview:apply"; apply.className = "primary-action"; apply.addEventListener("click", callbacks.apply);
+  const discard = make("button", "Discard preview"); discard.type = "button"; discard.dataset.previewDiscard = ""; discard.dataset.focusKey = "preview:discard"; discard.addEventListener("click", callbacks.discard);
+  actions.append(apply, discard); section.append(actions); return section;
+}
+
+export function reviewPanel(preview: StoreSnapshot["preview"], callbacks: ReviewCallbacks): HTMLElement {
+  if (preview?.status === "pending-human-fit") return humanFitReview(preview, callbacks);
   const section = document.createElement("section");
   section.className = "preview-review";
   const heading = document.createElement("h2"); heading.textContent = "Agent preview review"; section.append(heading);

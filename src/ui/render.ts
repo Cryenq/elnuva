@@ -96,7 +96,9 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
   const state = snapshot.workingState; const el = svg("svg") as SVGSVGElement;
   el.dataset.roomEditor = ""; el.setAttribute("role", "img"); el.setAttribute("aria-label", "Room layout editor");
   const description = svg("desc"); description.id = "room-layout-description"; description.textContent = `Interactive ${state.templateId === "home-office" ? "Home Office" : state.templateId === "bedroom" ? "Bedroom" : "Study"} plan, ${state.room.widthMm} by ${state.room.depthMm} millimetres. A matching data table follows the plan.`; el.setAttribute("aria-describedby", description.id); el.append(description);
-  el.setAttribute("viewBox", `0 0 ${state.room.widthMm} ${state.room.depthMm}`); el.classList.add("room-editor");
+  const fit = snapshot.preview?.status === "pending-human-fit" ? snapshot.preview : null;
+  const width = Math.max(state.room.widthMm, fit?.projectedState.room.widthMm ?? 0), depth = Math.max(state.room.depthMm, fit?.projectedState.room.depthMm ?? 0);
+  el.setAttribute("viewBox", `0 0 ${width} ${depth}`); el.classList.add("room-editor");
   for (const layerName of ["grid", "features", "furniture", "constraints", "dimensions", "preview"]) { const g = svg("g"); g.dataset.layer = layerName; el.append(g); }
   const grid = el.querySelector('[data-layer="grid"]')!;
   const room = svg("rect"); room.setAttribute("width", String(state.room.widthMm)); room.setAttribute("height", String(state.room.depthMm)); room.classList.add("room-boundary"); grid.append(room);
@@ -115,13 +117,21 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
   const dimensions=el.querySelector('[data-layer="dimensions"]')!; const text=svg("text");text.setAttribute("x","25");text.setAttribute("y","55");text.textContent=`${state.room.widthMm} × ${state.room.depthMm} mm`;dimensions.append(text);
   const previewLayer = el.querySelector('[data-layer="preview"]')!;
   if (snapshot.preview) {
-    for (const item of snapshot.preview.projectedFurniture) {
+    if (fit) {
+      const target = svg("rect"); target.dataset.fitTargetRoom = ""; target.dataset.widthMm = String(fit.projectedState.room.widthMm); target.dataset.depthMm = String(fit.projectedState.room.depthMm);
+      target.setAttribute("width", String(fit.projectedState.room.widthMm)); target.setAttribute("height", String(fit.projectedState.room.depthMm)); target.classList.add("fit-target-room"); previewLayer.append(target);
+      const label = svg("text"); label.setAttribute("x", "25"); label.setAttribute("y", "125"); label.textContent = `Target ${fit.projectedState.room.widthMm} × ${fit.projectedState.room.depthMm} mm — not applied`; label.classList.add("fit-target-label"); previewLayer.append(label);
+      renderConstraintCues(previewLayer as SVGGElement, fit.projectedState);
+    }
+    const projected = snapshot.preview.status === "pending-human-fit" ? snapshot.preview.projectedState.furniture : snapshot.preview.projectedFurniture;
+    for (const item of projected) {
       const current = state.furniture.find(candidate => candidate.id === item.id);
-      if (!current || (current.xMm === item.xMm && current.yMm === item.yMm && current.rotationDeg === item.rotationDeg)) continue;
+      if (!fit && (!current || (current.xMm === item.xMm && current.yMm === item.yMm && current.rotationDeg === item.rotationDeg))) continue;
       const entry = furnitureCatalogById(item.catalogId)!;
       const box = furnitureAabb(item);
       const ghost = svg("g") as SVGGElement;
-      ghost.dataset.previewItemId = item.id;
+      if (fit) { ghost.dataset.fitPreviewItemId = item.id; ghost.dataset.widthMm = String(entry.widthMm); ghost.dataset.depthMm = String(entry.depthMm); }
+      else ghost.dataset.previewItemId = item.id;
       ghost.dataset.xMm = String(item.xMm);
       ghost.dataset.yMm = String(item.yMm);
       ghost.dataset.rotationDeg = String(item.rotationDeg);

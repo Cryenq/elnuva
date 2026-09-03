@@ -2,6 +2,7 @@ import { BoxGeometry, Color, DirectionalLight, Group, HemisphereLight, LineBasic
 import type { BufferGeometry as Geometry, Material, Object3D } from "three";
 import { featureCatalogById, furnitureCatalogById } from "../domain/catalog";
 import type { Furniture, Pose, WorkingState } from "../domain/types";
+import { furnitureAabb, featureKeepOutAabb } from "../domain/geometry";
 import { createFurnitureVisual } from "./furniture-visuals";
 import { domainPoseToWorld, fitTopCamera, floorPointToSnappedMm } from "./spatial-projection";
 import type { CssViewport, MillimetrePoint, MountSpatialView, SpatialPoseRequest, SpatialViewState } from "./spatial-view-contract";
@@ -37,7 +38,10 @@ function sameBase(a: SpatialViewState, b: SpatialViewState): boolean {
 }
 
 function samePreview(a: SpatialViewState, b: SpatialViewState): boolean {
-  return a.snapshot.preview?.proposalDigest === b.snapshot.preview?.proposalDigest && a.snapshot.preview?.idempotencyKey === b.snapshot.preview?.idempotencyKey;
+  const left = a.snapshot.preview, right = b.snapshot.preview;
+  if (!left || !right) return left === right;
+  if (left.status === "pending-human-fit") return right.status === "pending-human-fit" && left.request.requestId === right.request.requestId && left.request.generation === right.request.generation;
+  return right.status !== "pending-human-fit" && left.proposalDigest === right.proposalDigest && left.idempotencyKey === right.idempotencyKey;
 }
 
 /** An isolated, disposable presentation adapter: it never owns or writes a store. */
@@ -58,10 +62,13 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
   canvas.setAttribute("role", "img");
   canvas.style.cssText = "display:block;width:100%;height:100%;touch-action:none;";
   host.append(canvas);
+  const feedback = document.createElement("p");
+  feedback.dataset.placementFeedback = ""; feedback.className = "placement-feedback spatial-placement-feedback";
+  feedback.setAttribute("aria-live", "polite"); feedback.setAttribute("aria-atomic", "true"); feedback.hidden = true; host.append(feedback);
   const scene = new Scene();
   scene.background = new Color(0xf1eee7);
-  const roomGroup = new Group(), currentGroup = new Group(), previewGroup = new Group();
-  scene.add(roomGroup, currentGroup, previewGroup);
+  const roomGroup = new Group(), currentGroup = new Group(), previewGroup = new Group(), targetRoomGroup = new Group(), feedbackGroup = new Group();
+  scene.add(roomGroup, currentGroup, previewGroup, targetRoomGroup, feedbackGroup);
   const hemisphere = new HemisphereLight(0xfffaf0, 0x838f88, 2.8);
   const sunlight = new DirectionalLight(0xfff6e4, 2.6);
   sunlight.position.set(-3, 7, 5);
@@ -89,6 +96,7 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
   }
 
   function cancelInteraction(): void {
+    clearFeedback();
     gestureGeneration += 1;
     const previous = gesture;
     gesture = null;
@@ -124,6 +132,59 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
     const mesh = new Mesh(new BoxGeometry(w, h, d), new MeshStandardMaterial({ color, roughness: 0.95, transparent: opacity < 1, opacity, depthWrite: opacity === 1 }));
     mesh.position.set(x, y, z);
     group.add(mesh);
+  }
+
+  function outline(group: Group, left: number, top: number, right: number, bottom: number, color: number, height = 0.04): void {
+    const corners = [new Vector3(left, height, top), new Vector3(right, height, top), new Vector3(right, height, bottom), new Vector3(left, height, bottom)];
+    const points: Vector3[] = [];
+    for (let index = 0; index < 4; index++) {
+      const from = corners[index], to = corners[(index + 1) % 4], length = from.distanceTo(to);
+      for (let at = 0; at < length; at += 0.12) points.push(from.clone().lerp(to, at / length), from.clone().lerp(to, Math.min(length, at + 0.075) / length));
+    }
+    const lines = new LineSegments(new BufferGeometry().setFromPoints(points), new LineBasicMaterial({ color, depthTest: false }));
+    lines.renderOrder = 5; group.add(lines);
+  }
+
+  function clearFeedback(): void {
+    feedback.hidden = true; feedback.textContent = ""; feedback.dataset.placementState = "valid";
+    releaseObjects(feedbackGroup);
+  }
+
+  function showFeedback(active: Gesture): void {
+    clearFeedback();
+    const assessment = callbacks.assessPose({ itemId: active.item.id, pose: { xMm: active.candidate.xMm, yMm: active.candidate.yMm, rotationDeg: active.candidate.rotationDeg }, baseTemplateId: active.baseTemplateId, baseRevision: active.baseRevision, baseHash: active.baseHash });
+    const warnings = assessment.constraintResults.filter(result => !result.satisfied);
+    if (assessment.hardValid && !warnings.length) return;
+    const blocked = !assessment.hardValid, color = blocked ? 0xb8302b : 0x865512;
+    feedback.dataset.placementState = blocked ? "blocked" : "warning"; feedback.hidden = false;
+    feedback.textContent = blocked ? `⛔ Blocked — ${active.item.id}: ${assessment.issues.map(issue => `${issue.message}${issue.featureId ? ` (${issue.featureId})` : ""} ${issue.itemIds.join(", ")}`).join("; ")}` : `△ Constraint warning — ${warnings.map(result => `${result.strength} ${result.constraintId} not satisfied`).join("; ")}. Moving is allowed.`;
+    const markItem = (item: Furniture) => { const box = furnitureAabb(item); outline(feedbackGroup, box.left2 / 2000, box.top2 / 2000, box.right2 / 2000, box.bottom2 / 2000, color); };
+    markItem({ ...active.item, ...active.candidate });
+    for (const issue of assessment.issues) {
+      for (const id of issue.itemIds) { const item = state.snapshot.workingState.furniture.find(value => value.id === id); if (item && id !== active.item.id) markItem(item); }
+      if (issue.featureId) {
+        const feature = state.snapshot.workingState.features.find(value => value.id === issue.featureId);
+        const box = feature ? featureKeepOutAabb(feature, state.snapshot.workingState.room) : null;
+        if (box) outline(feedbackGroup, box.left2 / 2000, box.top2 / 2000, box.right2 / 2000, box.bottom2 / 2000, color);
+      }
+      if (issue.code === "ITEM_OUT_OF_BOUNDS") outline(feedbackGroup, 0, 0, state.snapshot.workingState.room.widthMm / 1000, state.snapshot.workingState.room.depthMm / 1000, color);
+    }
+  }
+
+  function buildTargetRoom(): void {
+    releaseObjects(targetRoomGroup);
+    const preview = state.snapshot.preview;
+    if (preview?.status !== "pending-human-fit") return;
+    const working = preview.projectedState, width = working.room.widthMm / 1000, depth = working.room.depthMm / 1000;
+    addBox(targetRoomGroup, width, 0.006, depth, width / 2, 0.007, depth / 2, 0xc69446, 0.12);
+    outline(targetRoomGroup, 0, 0, width, depth, 0x9a6426);
+    for (const feature of working.features) {
+      const entry = featureCatalogById(feature.catalogId)!;
+      const horizontal = feature.wall === "north" || feature.wall === "south";
+      const span = entry.spanMm / 1000, thickness = Math.max(0.04, entry.depthMm / 1000), center = feature.offsetMm / 1000 + span / 2;
+      const edge = feature.wall === "north" || feature.wall === "west" ? thickness / 2 : (horizontal ? depth : width) - thickness / 2;
+      addBox(targetRoomGroup, horizontal ? span : thickness, 0.08, horizontal ? thickness : span, horizontal ? center : edge, 0.06, horizontal ? edge : center, 0xa26b29, 0.42);
+    }
   }
 
   function buildRoom(working: WorkingState): void {
@@ -201,7 +262,9 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
     };
     state.snapshot.workingState.furniture.forEach((item) => add(item, false));
     const preview = state.snapshot.preview;
-    if (preview) {
+    if (preview?.status === "pending-human-fit") {
+      preview.projectedState.furniture.forEach(item => add(item, true));
+    } else if (preview) {
       const moved = new Set(preview.moves.map((move) => move.itemId));
       preview.projectedFurniture.filter((item) => moved.has(item.id)).forEach((item) => add(item, true));
     }
@@ -215,7 +278,9 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
   }
 
   function fitCamera(): void {
-    const room = state.snapshot.workingState.room;
+    const original = state.snapshot.workingState.room;
+    const target = state.snapshot.preview?.status === "pending-human-fit" ? state.snapshot.preview.projectedState.room : original;
+    const room = { widthMm: Math.max(original.widthMm, target.widthMm), depthMm: Math.max(original.depthMm, target.depthMm) };
     const width = room.widthMm / 1000, depth = room.depthMm / 1000;
     const center = new Vector3(width / 2, 0, depth / 2);
     if (state.viewMode === "top") {
@@ -317,6 +382,7 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
     active.candidate = Math.hypot(event.clientX - active.startClientX, event.clientY - active.startClientY) <= 3 ? active.item : { ...snapped, rotationDeg: active.item.rotationDeg };
     const pose = domainPoseToWorld(active.candidate);
     itemGroups.get(active.item.id)?.position.set(pose.x, 0, pose.z);
+    showFeedback(active);
     requestDraw();
     event.preventDefault();
   }
@@ -358,12 +424,14 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
       const resetChanged = state.cameraResetVersion !== next.cameraResetVersion;
       const roomChanged = state.snapshot.workingState.room.widthMm !== next.snapshot.workingState.room.widthMm || state.snapshot.workingState.room.depthMm !== next.snapshot.workingState.room.depthMm;
       const selectionChanged = state.selectedItemId !== next.selectedItemId;
+      const fitFramingChanged = previewChanged && (state.snapshot.preview?.status === "pending-human-fit" || next.snapshot.preview?.status === "pending-human-fit");
       if (baseChanged || previewChanged || viewChanged || resetChanged) cancelInteraction();
       state = next;
       if (!available) return;
       if (baseChanged || viewChanged) buildRoom(state.snapshot.workingState);
+      if (baseChanged || previewChanged || viewChanged) buildTargetRoom();
       if (baseChanged || previewChanged || selectionChanged) buildFurniture();
-      if (roomChanged || viewChanged || resetChanged) fitCamera();
+      if (roomChanged || viewChanged || resetChanged || fitFramingChanged) fitCamera();
       resize();
       requestDraw();
     },
@@ -384,13 +452,14 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
       canvas.removeEventListener("pointercancel", pointerCancel);
       canvas.removeEventListener("lostpointercapture", pointerCancel);
       canvas.removeEventListener("webglcontextlost", contextLost);
-      releaseObjects(roomGroup); releaseObjects(currentGroup); releaseObjects(previewGroup);
+      releaseObjects(roomGroup); releaseObjects(currentGroup); releaseObjects(previewGroup); releaseObjects(targetRoomGroup); releaseObjects(feedbackGroup);
       itemGroups.clear();
       sunlight.dispose(); fill.dispose(); hemisphere.dispose();
       renderer?.dispose();
       renderer = null;
       scene.clear();
       canvas.remove();
+      feedback.remove();
     },
   });
 
@@ -402,6 +471,7 @@ export const mountSpatialView: MountSpatialView = (host, initialState, callbacks
       renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "low-power" });
       available = true;
       buildRoom(state.snapshot.workingState);
+      buildTargetRoom();
       buildFurniture();
       fitCamera();
       resize();

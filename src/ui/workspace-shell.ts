@@ -119,6 +119,8 @@ export function createWorkspaceShell(root: HTMLElement) {
   const featuresSlot = disclosure("features", "Features");
   const constraintsSlot = disclosure("constraints", "Constraints");
   const layoutDataSlot = disclosure("layout-data", "Layout data");
+  const fitSlot = element("div");
+  right.append(fitSlot);
   workspace.append(centre, rail, right);
 
   const agent = element("section");
@@ -133,5 +135,5 @@ export function createWorkspaceShell(root: HTMLElement) {
   footer.className = "site-footer";
   shell.append(header, entry, workspace, agent, footer);
   root.replaceChildren(shell);
-  return Object.freeze({ shell, workspace, entry, startButton, title, templateSlot, actionsSlot, summarySlot, catalogSlot, sceneListSlot, inspectorSlot, roomSlot, featuresSlot, constraintsSlot, layoutDataSlot, reviewSlot, precisionHost, spatialHost, spatialStatus, capabilityStatus, editorStatus, modeButtons, resetViewButton });
+  return Object.freeze({ shell, workspace, entry, startButton, title, templateSlot, actionsSlot, summarySlot, catalogSlot, sceneListSlot, inspectorSlot, roomSlot, featuresSlot, constraintsSlot, layoutDataSlot, fitSlot, reviewSlot, precisionHost, spatialHost, spatialStatus, capabilityStatus, editorStatus, modeButtons, resetViewButton });
 }
