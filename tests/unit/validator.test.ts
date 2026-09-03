@@ -37,6 +37,10 @@ function simpleState(furniture: WorkingState["furniture"], constraints: readonly
   return { schemaVersion: 1, templateId: "home-office", room: { widthMm, depthMm }, features, furniture, constraints };
 }
 
+function reinsertConstraintKeys(constraints: readonly Constraint[]): Constraint[] {
+  return constraints.map((constraint) => Object.fromEntries(Object.entries(constraint).reverse()) as Constraint);
+}
+
 describe("strict request classification", () => {
   it("accepts only the exact current request envelope", async () => {
     const ctx: Context = { workingState: homeState(), baseRevision: 1, baseHash: HOME_HASH };
@@ -76,6 +80,32 @@ describe("strict request classification", () => {
       await expectFailure(validateLayoutOptions(ctx, mutate(structuredClone(valid)) as never), "INVALID_INPUT");
       expect(label.length).toBeGreaterThan(0);
     }
+  });
+
+  it("accepts reordered keys in each otherwise exact constraint object across Validate and Stage verification", async () => {
+    const state = homeState();
+    const ctx = await contextFor(state);
+    const fixtureMove = move("desk-main", 1900, 500);
+    const reordered = reinsertConstraintKeys(state.constraints);
+    const validateInput = { baseRevision: 1, baseHash: HOME_HASH, constraints: reordered, options: [{ optionId: "valid", moves: [fixtureMove] }] };
+    const originalInput = { ...validateInput, constraints: state.constraints };
+    const original = await successData(validateLayoutOptions(ctx, originalInput));
+    const reorderedResult = await successData(validateLayoutOptions(ctx, validateInput));
+    expect(reorderedResult).toStrictEqual(original);
+
+    const stageRequest = {
+      baseRevision: 1,
+      baseHash: HOME_HASH,
+      constraints: reordered,
+      optionId: "valid",
+      moves: [fixtureMove],
+      proposalDigest: original.results[0].proposalDigest,
+      idempotencyKey: "reordered-keys-0001",
+    };
+    const recomputed = await successData(recomputeStageValidation(ctx, stageRequest));
+    expect(recomputed.proposalDigest).toBe(stageRequest.proposalDigest);
+    const verified = await successData(stageVerifier({ request: stageRequest, workingState: state, baseRevision: 1, baseHash: HOME_HASH }));
+    expect(verified.validation).toStrictEqual(recomputed);
   });
 
   it("distinguishes current, malformed, foreign, reordered, unsupported, and stale inputs", async () => {
