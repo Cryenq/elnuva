@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
 
 type Fixture = Readonly<{
   id: "home-office" | "bedroom" | "study";
@@ -70,7 +71,7 @@ async function invokeTool(page: Page, name: string, input: unknown): Promise<unk
 }
 
 async function openEditor(page: Page): Promise<Locator> {
-  await page.goto("/");
+  await openWorkspace(page);
   const editor = page.locator('svg[data-room-editor]');
   await expect(editor).toHaveCount(1);
   await expect(editor).toHaveAccessibleName("Room layout editor");
@@ -156,6 +157,7 @@ test.describe("precise room editor", () => {
         await expect(item).toHaveAttribute("data-x-mm", String(xMm));
         await expect(item).toHaveAttribute("data-y-mm", String(yMm));
         await expect(item).toHaveAttribute("data-rotation-deg", String(rotationDeg));
+        await selectFurniture(page, id);
         await expect(geometryRow(page, id)).toHaveCount(1);
         await expect(geometryRow(page, id)).toContainText(label);
       }
@@ -334,11 +336,7 @@ test.describe("precise room editor", () => {
     expect(after.data.preview).toMatchObject({ status: "pending-review", optionId: "home-valid", proposalDigest: HOME_VALID_DIGEST });
     expect(await page.evaluate(() => Object.entries(localStorage).sort(([a], [b]) => a.localeCompare(b)))).toEqual(storedBefore);
 
-    await expect(page.getByRole("combobox", { name: "Room template" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Update furniture" })).toHaveCount(3);
-    for (const control of await page.getByRole("button", { name: "Update furniture" }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("checkbox", { name: "Locked" }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("spinbutton").all()) await expect(control).toBeDisabled();
+    await expectPendingMutationControls(page);
   });
 
   test("has no page overflow or runtime errors at 1280, 390, and 320 px", async ({ page }) => {
@@ -349,7 +347,8 @@ test.describe("precise room editor", () => {
       await page.setViewportSize({ width, height: 800 });
       await openEditor(page);
       await expect(page.getByRole("combobox", { name: "Room template" })).toBeVisible();
-      await expect(page.locator('[data-geometry-row]')).toHaveCount(3);
+      await expect(page.locator('[data-scene-item-list] [data-spatial-item-id]')).toHaveCount(3);
+      for (const id of ["chair-main", "desk-main", "storage-main"]) await selectFurniture(page, id);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     }
     expect(errors).toEqual([]);

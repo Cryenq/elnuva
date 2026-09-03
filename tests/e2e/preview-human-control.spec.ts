@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
 
 type Tool = { execute: (input: unknown, options: { signal: AbortSignal }) => Promise<any> };
 const moveSets = {
@@ -38,7 +39,7 @@ async function stage(page: Page, template: keyof typeof moveSets) {
 
 test.describe("T07 preview review and human control", () => {
   test("renders the real Stage result as one ghost with explicit review truth", async ({ page }) => {
-    await installCapture(page); await page.goto("/");
+    await installCapture(page); await openWorkspace(page);
     const result = await stage(page, "home-office");
     expect(result).toMatchObject({ ok: true, data: { notApplied: true, notSaved: true, requiresHumanAction: true, allowedHumanActions: ["apply", "discard"] } });
     await expect(page.locator("[data-preview-review]")).toContainText(/not applied/i);
@@ -50,7 +51,7 @@ test.describe("T07 preview review and human control", () => {
 
   for (const template of ["home-office", "bedroom", "study"] as const) {
     test(`uses the exact ${template} StageValidationSummary in visible review`, async ({ page }) => {
-      await installCapture(page); await page.goto("/");
+      await installCapture(page); await openWorkspace(page);
       const result = await stage(page, template);
       expect(result.ok).toBe(true);
       await expect(page.locator('[data-preview-review] [data-option-id]')).toHaveAttribute("data-option-id", moveSets[template].optionId);
@@ -73,30 +74,27 @@ test.describe("T07 preview review and human control", () => {
   }
 
   test("disables every mutation control while pending except human Apply and Discard", async ({ page }) => {
-    await installCapture(page); await page.goto("/"); await stage(page, "home-office");
-    for (const name of ["Room template", "Add furniture", "Delete furniture", "Save", "Undo", "Reset", "Update furniture", "Locked"]) {
-      const control = page.getByRole(name === "Room template" ? "combobox" : name === "Locked" ? "checkbox" : "button", { name });
-      if (await control.count()) await expect(control.first()).toBeDisabled();
-    }
+    await installCapture(page); await openWorkspace(page); await stage(page, "home-office");
+    await expectPendingMutationControls(page);
     await expect(page.getByRole("button", { name: "Apply preview" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Discard preview" })).toBeEnabled();
   });
 
   test("keyboard Discard clears the ghost without changing revision or state, and reload proves unsaved", async ({ page }) => {
-    await installCapture(page); await page.goto("/"); await stage(page, "home-office");
+    await installCapture(page); await openWorkspace(page); await stage(page, "home-office");
     const revision = page.locator("dt").filter({ hasText: /^Revision$/ }).locator("xpath=following-sibling::dd[1]");
     await expect(revision).toHaveText("1");
     await page.getByRole("button", { name: "Discard preview" }).focus();
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
     await expect(revision).toHaveText("1");
-    await stage(page, "home-office"); await page.reload();
+    await stage(page, "home-office"); await page.reload(); await preparePrecisionWorkspace(page);
     await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
     await expect(page.locator("[data-preview-review]")).toHaveCount(0);
   });
 
   test("keyboard Apply changes pose and revision once, then Undo restores it without conflating Save", async ({ page }) => {
-    await installCapture(page); await page.goto("/"); await stage(page, "home-office");
+    await installCapture(page); await openWorkspace(page); await stage(page, "home-office");
     await page.getByRole("button", { name: "Apply preview" }).focus(); await page.keyboard.press("Enter");
     await expect(page.locator("dt").filter({ hasText: /^Revision$/ }).locator("xpath=following-sibling::dd[1]")).toHaveText("2");
     await expect(page.locator('[data-furniture-id="desk-main"]')).toHaveAttribute("data-x-mm", "1900");

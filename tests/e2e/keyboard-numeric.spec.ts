@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView } from "./workspace-helpers";
 
 async function installToolCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -13,7 +14,7 @@ async function installToolCapture(page: Page): Promise<void> {
 }
 
 async function openEditor(page: Page): Promise<Locator> {
-  await page.goto("/");
+  await openWorkspace(page);
   const editor = page.locator('svg[data-room-editor]');
   await expect(editor).toBeVisible();
   return editor;
@@ -30,7 +31,7 @@ async function revision(page: Page): Promise<number> {
 }
 
 async function updateNumeric(page: Page, itemId: string, x: string, y: string, rotation: string): Promise<void> {
-  const target = row(page, itemId);
+  const target = await selectFurniture(page, itemId);
   await target.getByRole("spinbutton", { name: "X position (mm)" }).fill(x);
   await target.getByRole("spinbutton", { name: "Y position (mm)" }).fill(y);
   await target.getByRole("spinbutton", { name: "Rotation" }).fill(rotation);
@@ -79,7 +80,7 @@ test.describe("numeric and keyboard editing", () => {
   });
 
   test("keeps locked Storage pose controls disabled until the human unlocks it", async ({ page }) => {
-    const storage = row(page, "storage-main");
+    const storage = await selectFurniture(page, "storage-main");
     const lock = storage.getByRole("checkbox", { name: "Locked" });
     await expect(lock).toBeChecked();
     await expect(lock).toBeEnabled();
@@ -142,6 +143,7 @@ test.describe("numeric and keyboard editing", () => {
   }
 
   test("uses Enter and Space for selection while focus remains visibly distinct", async ({ page }) => {
+    await selectFurniture(page, "desk-main");
     const chair = page.locator('[data-furniture-id="chair-main"]');
     const desk = page.locator('[data-furniture-id="desk-main"]');
     await expect(chair).toHaveAttribute("role", "button");

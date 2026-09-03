@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView } from "./workspace-helpers";
 
 const factories = {
   "home-office": {
@@ -77,7 +78,14 @@ async function expectFactory(page: Page, id: keyof typeof factories): Promise<vo
     expect(cueText).toContain(expected.constraints[index].split(":")[0]);
     for (const referent of expected.constraintReferents[index]) expect(cueText).toContain(referent);
   }
-  expect(await page.locator("[data-geometry-row]").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.itemId))).toEqual(expected.furniture.map(item => item[0]));
+  expect(await page.locator("[data-scene-item-list] [data-spatial-item-id]").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.spatialItemId))).toEqual(expected.furniture.map(item => item[0]));
+  for (const [itemId, xMm, yMm, rotation, locked] of expected.furniture) {
+    const form = await selectFurniture(page, itemId);
+    await expect(form.getByRole("spinbutton", { name: "X position (mm)" })).toHaveValue(xMm);
+    await expect(form.getByRole("spinbutton", { name: "Y position (mm)" })).toHaveValue(yMm);
+    await expect(form.getByRole("spinbutton", { name: "Rotation" })).toHaveValue(rotation);
+    await expect(form.getByRole("checkbox", { name: "Locked" })).toBeChecked({ checked: locked === "true" });
+  }
 }
 
 async function optionValues(locator: Locator): Promise<string[]> {
@@ -102,7 +110,7 @@ async function savedTemplateKey(page: Page): Promise<string> {
 }
 
 test.describe("T08 templates and persistence", () => {
-  test.beforeEach(async ({ page }) => { await page.goto("/"); });
+  test.beforeEach(async ({ page }) => { await openWorkspace(page); });
 
   for (const id of Object.keys(factories) as (keyof typeof factories)[]) {
     test(`${id} exposes the exact factory in SVG and semantic controls`, async ({ page }) => {
@@ -112,7 +120,7 @@ test.describe("T08 templates and persistence", () => {
   }
 
   test("keeps template drafts independent and restores each draft when switching", async ({ page }) => {
-    const chair = row(page, "chair-main");
+    const chair = await selectFurniture(page, "chair-main");
     await chair.getByRole("spinbutton", { name: "X position (mm)" }).fill("1900");
     await chair.getByRole("spinbutton", { name: "Y position (mm)" }).fill("1300");
     await chair.getByRole("button", { name: "Update furniture" }).click();
@@ -124,7 +132,7 @@ test.describe("T08 templates and persistence", () => {
 
   test("keeps saved and unsaved drafts independent across templates and reload", async ({ page }) => {
     await selectTemplate(page, "bedroom");
-    const nightstand = row(page, "nightstand-main");
+    const nightstand = await selectFurniture(page, "nightstand-main");
     const bedroomRevision = Number(await summary(page, "Revision").textContent());
     await nightstand.getByRole("spinbutton", { name: "X position (mm)" }).fill("3950");
     await nightstand.getByRole("spinbutton", { name: "Y position (mm)" }).fill("2500");
@@ -132,11 +140,11 @@ test.describe("T08 templates and persistence", () => {
     await expect(summary(page, "Revision")).toHaveText(String(bedroomRevision + 1));
     await page.getByRole("button", { name: "Save" }).click();
     await selectTemplate(page, "study");
-    const chair = row(page, "chair-main");
+    const chair = await selectFurniture(page, "chair-main");
     await chair.getByRole("spinbutton", { name: "X position (mm)" }).fill("2300");
     await chair.getByRole("spinbutton", { name: "Y position (mm)" }).fill("1400");
     await chair.getByRole("button", { name: "Update furniture" }).click();
-    await page.reload();
+    await page.reload(); await preparePrecisionWorkspace(page);
     await expect(page.getByRole("combobox", { name: "Room template" })).toHaveValue("home-office");
     await selectTemplate(page, "bedroom");
     await expect(page.locator('[data-furniture-id="nightstand-main"]')).toHaveAttribute("data-x-mm", "3950");
@@ -146,24 +154,24 @@ test.describe("T08 templates and persistence", () => {
   });
 
   test("Save persists only the active draft; Reset is an explicit later mutation", async ({ page }) => {
-    const chair = row(page, "chair-main");
+    const chair = await selectFurniture(page, "chair-main");
     await chair.getByRole("spinbutton", { name: "X position (mm)" }).fill("1900");
     await chair.getByRole("spinbutton", { name: "Y position (mm)" }).fill("1300");
     await chair.getByRole("button", { name: "Update furniture" }).click();
     await page.getByRole("button", { name: "Save" }).click();
     await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/save.*complete/i);
-    await page.reload();
+    await page.reload(); await preparePrecisionWorkspace(page);
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "1900");
     const beforeReset = Number(await summary(page, "Revision").textContent());
     await page.getByRole("button", { name: "Reset" }).click();
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "2500");
     await expect(summary(page, "Revision")).toHaveText(String(beforeReset + 1));
-    await page.reload();
+    await page.reload(); await preparePrecisionWorkspace(page);
     await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "1900");
   });
 
   test("adds, locks, edits, unlocks, and deletes furniture through bounded human controls", async ({ page }) => {
-    const locked = row(page, "storage-main");
+    const locked = await selectFurniture(page, "storage-main");
     await expect(locked.getByRole("checkbox", { name: "Locked" })).toBeChecked();
     await expect(locked.getByRole("button", { name: "Update furniture" })).toBeDisabled();
     await expect(locked.getByRole("button", { name: "Delete furniture" })).toBeDisabled();
@@ -178,11 +186,13 @@ test.describe("T08 templates and persistence", () => {
     await locked.getByRole("button", { name: "Delete furniture" }).click();
     await expect(summary(page, "Revision")).toHaveText(String(++revision));
     await expect(row(page, "storage-main")).toHaveCount(0);
+    await expect(page.locator('[data-scene-item-list] [data-spatial-item-id="storage-main"]')).toHaveCount(0);
+    await expect(page.locator('[data-scene-item-list] [data-spatial-item-id]')).toHaveCount(2);
     const add = page.getByRole("combobox", { name: "Add furniture" });
     await add.selectOption("storage-800x400");
     await page.getByRole("button", { name: "Add selected furniture" }).click();
     await expect(summary(page, "Revision")).toHaveText(String(++revision));
-    await expect(page.locator("[data-geometry-row]")).toHaveCount(3);
+    await expect(page.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(3);
   });
 
   test("adds, edits, and deletes a constraint and rejects both eight-item caps without mutation", async ({ page }) => {
@@ -207,12 +217,12 @@ test.describe("T08 templates and persistence", () => {
       await addFurniture.selectOption(catalogId);
       await page.getByRole("button", { name: "Add selected furniture" }).click();
     }
-    await expect(page.locator("[data-geometry-row]")).toHaveCount(8);
+    await expect(page.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(8);
     const furnitureCapRevision = await summary(page, "Revision").textContent();
     const furnitureAdd = page.getByRole("button", { name: "Add selected furniture" });
     await expect(furnitureAdd).toBeDisabled();
     await furnitureAdd.evaluate((button: HTMLButtonElement) => button.click());
-    await expect(page.locator("[data-geometry-row]")).toHaveCount(8);
+    await expect(page.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(8);
     await expect(summary(page, "Revision")).toHaveText(furnitureCapRevision!);
     await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/maximum.*8/i);
     for (let index = 4; index < 8; index += 1) await page.getByRole("button", { name: "Add constraint" }).click();
@@ -313,7 +323,7 @@ test.describe("T08 templates and persistence", () => {
 
   for (const scenario of ["malformed saved data", "version-mismatched saved data"] as const) {
     test(`${scenario} falls back to the factory and reports a sanitized visible error`, async ({ page }) => {
-      const chair = row(page, "chair-main");
+      const chair = await selectFurniture(page, "chair-main");
       await chair.getByRole("spinbutton", { name: "X position (mm)" }).fill("1900");
       await chair.getByRole("button", { name: "Update furniture" }).click();
       await page.getByRole("button", { name: "Save" }).click();
@@ -328,7 +338,7 @@ test.describe("T08 templates and persistence", () => {
         envelope.storageVersion = 999;
         localStorage.setItem(key, JSON.stringify(envelope));
       }, { key, scenario });
-      await page.reload();
+      await page.reload(); await preparePrecisionWorkspace(page);
       await expect(page.locator('[data-furniture-id="chair-main"]')).toHaveAttribute("data-x-mm", "2500");
       const status = page.locator('[data-editor-status][role="status"]');
       await expect(status).toContainText(/saved template data.*invalid.*factory data.*loaded/i);

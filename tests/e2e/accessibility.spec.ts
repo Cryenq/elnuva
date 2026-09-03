@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
 
 async function installCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -47,7 +48,7 @@ function contrastRatio(foreground: string, background: string): number {
 
 test.describe("T08 accessibility and truthful state", () => {
   test("has native names, logical keyboard focus, and a same-snapshot text alternative", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     await expect(page.getByRole("heading", { level: 1, name: "Elnuva" })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Room template" })).toBeVisible();
     const editor = page.locator('svg[data-room-editor]');
@@ -69,7 +70,7 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("gives the Add Feature catalog and wall selectors visible accessible labels", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     const featureAdd = page.getByRole("button", { name: "Add feature" }).locator("xpath=ancestor::form[1]");
     const featureType = featureAdd.getByRole("combobox", { name: "Feature type" });
     const wall = featureAdd.getByRole("combobox", { name: "Wall", exact: true });
@@ -83,7 +84,7 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("keeps keyboard focus distinct from selection and restores focus after a row mutation", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     const chairGraphic = page.locator('[data-furniture-id="chair-main"]');
     const deskGraphic = page.locator('[data-furniture-id="desk-main"]');
     await chairGraphic.focus();
@@ -107,7 +108,7 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("reports errors and success with text, role status, and no color-only meaning", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     const chair = page.locator('[data-geometry-row][data-item-id="chair-main"]');
     await chair.getByRole("spinbutton", { name: "X position (mm)" }).fill("200");
     await chair.getByRole("button", { name: "Update furniture" }).click();
@@ -123,7 +124,7 @@ test.describe("T08 accessibility and truthful state", () => {
 
   test("preview is explicitly not applied/not saved and leaves only Apply/Discard enabled", async ({ page }) => {
     await installCapture(page);
-    await page.goto("/");
+    await openWorkspace(page);
     await expect.poll(() => page.evaluate(() => (window as any).__elnuvaTools?.size)).toBe(3);
     await stageHome(page);
     const review = page.locator("[data-preview-review]");
@@ -133,16 +134,7 @@ test.describe("T08 accessibility and truthful state", () => {
     await expect(pendingStatus).toContainText(/pending review/i);
     await expect(pendingStatus).toContainText(/not applied/i);
     await expect(pendingStatus).toContainText(/not saved/i);
-    await expect(page.getByRole("combobox", { name: "Room template" })).toBeDisabled();
-    await expect(page.getByRole("combobox", { name: "Add furniture" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Add selected furniture" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Add constraint" })).toBeDisabled();
-    for (const name of ["Save", "Undo", "Reset"]) await expect(page.getByRole("button", { name })).toBeDisabled();
-    for (const control of await page.getByRole("button", { name: "Update furniture" }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("button", { name: "Delete furniture" }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("button", { name: /update constraint/i }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("button", { name: /delete constraint/i }).all()) await expect(control).toBeDisabled();
-    for (const control of await page.getByRole("checkbox", { name: "Locked" }).all()) await expect(control).toBeDisabled();
+    await expectPendingMutationControls(page);
     await expect(page.getByRole("button", { name: "Apply preview" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Discard preview" })).toBeEnabled();
     await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveAttribute("aria-label", /preview ghost.*not applied/i);
@@ -154,7 +146,7 @@ test.describe("T08 accessibility and truthful state", () => {
 
   test("returns keyboard focus to a meaningful target after preview Discard and Apply", async ({ page }) => {
     await installCapture(page);
-    await page.goto("/");
+    await openWorkspace(page);
     await stageHome(page, "fixture-home-0003");
     await page.getByRole("button", { name: "Discard preview" }).focus();
     await page.keyboard.press("Enter");
@@ -171,14 +163,15 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("returns keyboard focus to a meaningful remaining target after deleting furniture, feature, and constraint", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
 
-    const furnitureDelete = page.locator('[data-geometry-row][data-item-id="storage-main"]');
+    const furnitureDelete = await selectFurniture(page, "storage-main");
     await furnitureDelete.getByRole("checkbox", { name: "Locked" }).uncheck();
     const deleteFurniture = furnitureDelete.getByRole("button", { name: "Delete furniture" });
     await deleteFurniture.focus();
     await page.keyboard.press("Enter");
     await expect(furnitureDelete).toHaveCount(0);
+    await expect(page.locator('[data-scene-item-list] [data-spatial-item-id="storage-main"]')).toHaveCount(0);
     await expectMeaningfulFocus(page);
     await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/storage-main|delet/i);
 
@@ -209,7 +202,7 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("does not render internal storage, replay, prompt, or inactive-template metadata", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     const body = page.locator("body");
     await expect(body).not.toContainText(/elnuva:v1:template|idempotency|reservation|proposalDigest|localStorage|prompt transcript/i);
     await expect(body).not.toContainText(/bed-main|table-main/);
@@ -217,7 +210,7 @@ test.describe("T08 accessibility and truthful state", () => {
   });
 
   test("keeps small footer text at or above 4.5 to 1 contrast", async ({ page }) => {
-    await page.goto("/");
+    await openWorkspace(page);
     const colors = await page.locator(".site-footer").evaluate(node => ({
       foreground: getComputedStyle(node).color,
       background: getComputedStyle(document.body).backgroundColor,
