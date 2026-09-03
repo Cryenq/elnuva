@@ -18,8 +18,9 @@ Applying, discarding, and saving remain visible human actions.
 
 - Vanilla TypeScript
 - Vite
+- Three.js
 - Static Netlify hosting
-- No application runtime dependencies, backend, or external AI API
+- No backend or external AI API
 
 ## Status
 
