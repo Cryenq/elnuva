@@ -1,0 +1,28 @@
+# Local private files
+AGENTS.md
+AGENTS.override.md
+.orchestrator/
+.codex/
+.worktreeinclude
+.devpost-hackathon-state.json
+.devpost-hackathon-state.*
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Generated project output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+.netlify/
+
+# Local operating-system and editor data
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
