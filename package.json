@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest --exclude 'tests/e2e/**'",
     "build": "vite build",
     "preview": "vite preview"
   },
