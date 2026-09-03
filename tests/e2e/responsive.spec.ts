@@ -20,6 +20,114 @@ async function stageHome(page: Page): Promise<void> {
 
 const overflow = (page: Page) => page.evaluate(() => ({ viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
 
+async function expectReadablePreviewMetrics(page: Page, expectedColumns: number): Promise<void> {
+  const metrics = page.locator("[data-preview-review] .preview-metrics");
+  await expect(metrics.locator(":scope > div > dt")).toHaveText([
+    "Option", "Moved", "Rotated", "Movement", "Clearance",
+    "Required constraints", "Preferred constraints", "Validation",
+  ]);
+  await expect(metrics.locator(":scope > div > dd")).toHaveText([
+    "home-valid", "1", "0", "600 mm", "100 mm", "2/2", "2/2", "Valid · stageable",
+  ]);
+  await metrics.scrollIntoViewIfNeeded();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  for (const term of await metrics.locator("dt, dd").all()) await expect(term).toBeVisible();
+
+  const geometry = await metrics.evaluate(element => {
+    // Use text fragments, not element visibility or root scrollWidth: overflow-x: clip
+    // can conceal unreadable content while both of those weaker checks still pass.
+    const tolerance = 0.5; // Only allow subpixel layout rounding, not clipped letters.
+    const rect = (value: DOMRect) => ({
+      left: value.left, right: value.right, top: value.top, bottom: value.bottom,
+      width: value.width, height: value.height,
+    });
+    const metricsBox = rect(element.getBoundingClientRect());
+    const reviewBox = rect(element.closest("[data-preview-review]")!.getBoundingClientRect());
+    const cells = Array.from(element.children, cell => ({
+      name: cell.querySelector("dt")!.textContent!,
+      box: rect(cell.getBoundingClientRect()),
+      terms: Array.from(cell.querySelectorAll("dt, dd"), term => {
+        const fragments: ReturnType<typeof rect>[] = [];
+        const textNodes = document.createTreeWalker(term, NodeFilter.SHOW_TEXT);
+        let textNode: Node | null;
+        while ((textNode = textNodes.nextNode())) {
+          if (!textNode.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(textNode);
+          fragments.push(...Array.from(range.getClientRects(), rect));
+        }
+        return { text: term.textContent!, box: rect(term.getBoundingClientRect()), fragments };
+      }),
+    }));
+    const violations: string[] = [];
+    const contained = (inner: ReturnType<typeof rect>, outer: ReturnType<typeof rect>) =>
+      inner.left >= outer.left - tolerance && inner.right <= outer.right + tolerance &&
+      inner.top >= outer.top - tolerance && inner.bottom <= outer.bottom + tolerance;
+    const overlaps = (a: ReturnType<typeof rect>, b: ReturnType<typeof rect>) =>
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > tolerance &&
+      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > tolerance;
+    const runs: { name: string; box: ReturnType<typeof rect> }[] = [];
+    for (const [cellIndex, cell] of cells.entries()) {
+      for (const term of cell.terms) {
+        const name = `${cell.name}: ${term.text}`;
+        if (term.fragments.length === 0) violations.push(`${name} has no rendered text fragments`);
+        for (const fragment of term.fragments) {
+          if (fragment.width <= 0 || fragment.height <= 0) violations.push(`${name} has an empty text fragment`);
+          for (const [boundary, box] of [
+            ["label/value", term.box], ["metric cell", cell.box],
+            ["metrics grid", metricsBox], ["review panel", reviewBox],
+          ] as const) {
+            if (!contained(fragment, box)) {
+              violations.push(`${name} text escapes ${boundary}: ${JSON.stringify({ fragment, box })}`);
+            }
+          }
+          if (fragment.left < -tolerance || fragment.right > document.documentElement.clientWidth + tolerance) {
+            violations.push(`${name} text is clipped by the viewport horizontally`);
+          }
+          for (const [neighborIndex, neighbor] of cells.entries()) {
+            if (cellIndex !== neighborIndex && overlaps(fragment, neighbor.box)) {
+              violations.push(`${name} text overlaps neighboring metric cell ${neighbor.name}`);
+            }
+          }
+          runs.push({ name, box: fragment });
+        }
+      }
+    }
+    for (let i = 0; i < runs.length; i += 1) {
+      for (let j = i + 1; j < runs.length; j += 1) {
+        if (overlaps(runs[i].box, runs[j].box)) {
+          violations.push(`${runs[i].name} text overlaps ${runs[j].name} text`);
+        }
+      }
+    }
+    return { violations, columns: getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length };
+  });
+  // Readability is asserted first so a bad cascade fails on actual clipping/overlap.
+  expect(geometry.violations, "Every Preview metric label and value must remain readable").toEqual([]);
+  expect(geometry.columns).toBe(expectedColumns);
+}
+
+for (const viewport of [
+  { width: 1280, height: 800, columns: 4 },
+  { width: 390, height: 844, columns: 2 },
+  { width: 320, height: 568, columns: 2 },
+] as const) {
+  test(`${viewport.width}px keeps every Preview metric text contained and non-overlapping`, async ({ page }) => {
+    // This captured registration exercises the real Stage/UI path deterministically;
+    // it is not evidence of native client discovery or model-selected invocation.
+    await installCapture(page);
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    await stageHome(page);
+    await expect(page.locator('[data-layer="preview"] .preview-ghost')).toBeVisible();
+    await expectReadablePreviewMetrics(page, viewport.columns);
+    await expect(page.getByRole("button", { name: "Apply preview" })).toBeEnabled();
+    await page.getByRole("button", { name: "Discard preview" }).click();
+    await expect(page.locator("[data-preview-review]")).toHaveCount(0);
+    await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveCount(0);
+  });
+}
+
 for (const viewport of [
   { width: 1280, height: 800, name: "desktop" },
   { width: 390, height: 844, name: "mobile" },
