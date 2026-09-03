@@ -250,3 +250,5 @@ thead th {
     scroll-behavior: auto !important;
   }
 }
+
+.editor-actions,.preview-actions{display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0}.editor-actions button,.preview-actions button{border:1px solid #729081;border-radius:.5rem;background:#fff;padding:.55rem .8rem;color:#203d34;font-weight:700;cursor:pointer}.editor-actions button:disabled{cursor:not-allowed;opacity:.45}.preview-review{margin-top:1.25rem;border:1px solid #bd9b62;border-radius:.75rem;background:#fffaf0;padding:1rem}.preview-review h2{margin-bottom:.45rem}.preview-trust-status{border-radius:.5rem;background:#f4e5c8;padding:.65rem .8rem;color:#754b1d}.preview-instruction{color:#5b5143;font-size:.9rem;line-height:1.45}.preview-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0}.preview-metrics dd{font-size:.95rem}.preview-moves{margin:.75rem 0;padding-left:1.2rem;color:#4e4638}.preview-actions{margin-bottom:0}.preview-actions .primary-action{background:#285844;color:white;border-color:#285844}.preview-ghost{filter:drop-shadow(0 0 8px rgb(154 100 38 / 25%))}
