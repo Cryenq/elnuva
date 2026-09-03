@@ -312,3 +312,67 @@ describe("T06 handler-side symbol-key rejection", () => {
     }
   });
 });
+
+describe("T06 hostile object rejection", () => {
+  const cases = ["throwing ownKeys proxy", "throwing get proxy", "root accessor", "nested accessor"] as const;
+
+  function hostileInput(kind: (typeof cases)[number], request: Record<PropertyKey, unknown>): unknown {
+    if (kind === "throwing ownKeys proxy") {
+      return new Proxy(request, { ownKeys: () => { throw new Error("hostile ownKeys trap"); } });
+    }
+    if (kind === "throwing get proxy") {
+      return new Proxy(request, { get: () => { throw new Error("hostile get trap"); } });
+    }
+    if (kind === "root accessor") {
+      const revision = request.baseRevision;
+      Object.defineProperty(request, "baseRevision", {
+        configurable: true,
+        enumerable: true,
+        get: () => revision,
+      });
+      return request;
+    }
+    const moves = ("options" in request
+      ? (request.options as Array<{ moves: Array<{ pose: Record<PropertyKey, unknown> }> }>)[0].moves
+      : request.moves as Array<{ pose: Record<PropertyKey, unknown> }>);
+    const xMm = moves[0].pose.xMm;
+    Object.defineProperty(moves[0].pose, "xMm", {
+      configurable: true,
+      enumerable: true,
+      get: () => xMm,
+    });
+    return request;
+  }
+
+  it.each(cases)("resolves Validate %s as INVALID_INPUT before acquiring its reservation", async (kind) => {
+    const snapshot = await createDocumentStore({ storage: null }).snapshot();
+    const input = hostileInput(kind, structuredClone(validOption(snapshot)) as Record<PropertyKey, unknown>);
+    const store = {
+      beginValidate: vi.fn(() => ({ token: Symbol("reservation") })),
+      releaseValidate: vi.fn(() => true),
+      snapshot: vi.fn(async () => snapshot),
+    };
+    const handler = createValidateLayoutOptionsHandler(store as unknown as Pick<DomainStore, "beginValidate" | "releaseValidate" | "snapshot">);
+
+    await expect(handler(input, { signal: signal() })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "The request is invalid." },
+    });
+    expect(store.beginValidate).not.toHaveBeenCalled();
+    expect(store.snapshot).not.toHaveBeenCalled();
+    expect(store.releaseValidate).not.toHaveBeenCalled();
+  });
+
+  it.each(cases)("resolves Stage %s as INVALID_INPUT before entering the store", async (kind) => {
+    const snapshot = await createDocumentStore({ storage: null }).snapshot();
+    const input = hostileInput(kind, structuredClone(validStage(snapshot)) as unknown as Record<PropertyKey, unknown>);
+    const store = { stage: vi.fn() };
+    const handler = createStageLayoutPreviewHandler(store as unknown as Pick<DomainStore, "stage">);
+
+    await expect(handler(input, { signal: signal() })).resolves.toStrictEqual({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "The request is invalid." },
+    });
+    expect(store.stage).not.toHaveBeenCalled();
+  });
+});

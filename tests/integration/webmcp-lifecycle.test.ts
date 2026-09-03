@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createDocumentStore, type DomainStore, type StoreSnapshot } from "../../src/domain/store";
 import { registerWebMcpTools } from "../../src/webmcp/register";
 import type { ModelContextTool, WebMcpHandlers } from "../../src/webmcp/types";
 
@@ -42,6 +43,10 @@ afterEach(() => {
   vi.doUnmock("../../src/domain/fixture");
   vi.doUnmock("../../src/webmcp/handlers");
   vi.doUnmock("../../src/webmcp/register");
+  vi.doUnmock("../../src/ui/render");
+  vi.doUnmock("../../src/ui/svg-editor");
+  vi.doUnmock("../../src/ui/inspector");
+  vi.doUnmock("../../src/ui/constraints");
 });
 
 describe("T06 Document registration lifecycle", () => {
@@ -185,5 +190,78 @@ describe("T06 Document registration lifecycle", () => {
     expect(register).toHaveBeenCalledTimes(1);
     expect(register).toHaveBeenCalledWith({ document: fakeDocument, ...complete });
     expect(capability).toHaveBeenCalledWith("registered", "WebMCP tools are available.");
+  });
+});
+
+class TestElement {
+  readonly dataset: Record<string, string> = {};
+  readonly attributes = new Map<string, string>();
+  children: TestElement[] = [];
+  className = "";
+  textContent = "";
+  value = "";
+  disabled = false;
+
+  constructor(readonly tagName: string) {}
+
+  append(...nodes: TestElement[]): void { this.children.push(...nodes); }
+  replaceChildren(...nodes: Array<TestElement | string>): void {
+    this.children = nodes.filter((node): node is TestElement => node instanceof TestElement);
+    if (typeof nodes[0] === "string") this.textContent = nodes[0];
+  }
+  setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
+  addEventListener(): void {}
+  querySelector(selector: string): TestElement | null {
+    if (selector === ".capability-status" && this.className.split(" ").includes("capability-status")) return this;
+    if (selector === "[data-editor-status]" && Object.hasOwn(this.dataset, "editorStatus")) return this;
+    for (const child of this.children) {
+      const found = child.querySelector(selector);
+      if (found) return found;
+    }
+    return null;
+  }
+}
+
+describe("T06 capability result/draw ordering", () => {
+  it.each([
+    ["registered", "WebMCP tools are available."],
+    ["unavailable", "WebMCP unavailable in this client. The room layout remains available."],
+  ] as const)("retains an immediately resolved %s result through the first draw and a redraw", async (state, message) => {
+    const snapshot = await createDocumentStore({ storage: null }).snapshot();
+    let drawFromStore!: (value: StoreSnapshot) => void;
+    const unsubscribe = vi.fn();
+    const store = {
+      subscribe: vi.fn((listener: (value: StoreSnapshot) => void) => {
+        drawFromStore = listener;
+        return unsubscribe;
+      }),
+    } as unknown as DomainStore;
+    const root = new TestElement("div");
+    vi.resetModules();
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new TestElement(tag),
+    });
+    vi.doMock("../../src/ui/render", () => ({ roomSvg: () => new TestElement("svg") }));
+    vi.doMock("../../src/ui/svg-editor", () => ({ startDrag: vi.fn() }));
+    vi.doMock("../../src/ui/inspector", () => ({ inspector: () => new TestElement("section") }));
+    vi.doMock("../../src/ui/constraints", () => ({ constraintsList: () => new TestElement("section") }));
+    const { hydrateApp } = await import("../../src/app");
+    const app = hydrateApp(root as unknown as HTMLElement, undefined, store);
+
+    await Promise.resolve({ status: state }).then(() => app.setCapabilityStatus(state, message));
+    expect(root.children).toHaveLength(0);
+
+    drawFromStore(snapshot);
+    const firstStatus = root.querySelector(".capability-status");
+    expect(firstStatus?.dataset.state).toBe(state);
+    expect(firstStatus?.textContent).toBe(message);
+
+    drawFromStore(snapshot);
+    const redrawnStatus = root.querySelector(".capability-status");
+    expect(redrawnStatus).not.toBe(firstStatus);
+    expect(redrawnStatus?.dataset.state).toBe(state);
+    expect(redrawnStatus?.textContent).toBe(message);
+    app.teardown();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });
