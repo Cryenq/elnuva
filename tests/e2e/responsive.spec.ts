@@ -50,6 +50,28 @@ for (const viewport of [
 }
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }] as const) {
+  test(`${viewport.width}px keeps visual card order aligned with DOM and keyboard order`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    const controls = page.getByRole("heading", { level: 2, name: "Templates" }).locator("xpath=ancestor::aside[1]");
+    const plan = page.getByRole("heading", { level: 2, name: "Home Office plan" }).locator("xpath=ancestor::section[1]");
+    const details = page.getByRole("heading", { level: 2, name: "Furniture", exact: true }).locator("xpath=ancestor::aside[1]");
+    const domOrder = await page.locator("main.workspace > .card").evaluateAll(cards => cards.map(card => card.querySelector("h2")?.textContent?.trim()));
+    expect(domOrder).toEqual(["Templates", "Home Office plan", "Furniture"]);
+    const boxes = await Promise.all([controls, plan, details].map(locator => locator.boundingBox()));
+    expect(boxes.every(Boolean)).toBe(true);
+    expect(boxes[0]!.y).toBeLessThan(boxes[1]!.y);
+    expect(boxes[1]!.y).toBeLessThan(boxes[2]!.y);
+    await page.keyboard.press("Tab");
+    const template = page.getByRole("combobox", { name: "Room template" });
+    await expect(template).toBeFocused();
+    const templateBox = await template.boundingBox();
+    const saveBox = await page.getByRole("button", { name: "Save" }).boundingBox();
+    expect(templateBox).not.toBeNull();
+    expect(saveBox).not.toBeNull();
+    expect(templateBox!.y).toBeLessThan(saveBox!.y);
+  });
+
   test(`${viewport.width}px keeps expanded preview review and human controls visible without overflow`, async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(`page: ${error.message}`));
