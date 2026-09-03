@@ -240,7 +240,7 @@ thead th {
 
 .site-footer {
   padding: 1rem 0 0;
-  color: #73807b;
+  color: #4c5b55;
   font-size: 0.78rem;
 }
 
@@ -250,7 +250,13 @@ thead th {
 .feature-door { fill:#c58450; }.feature-window { fill:#78a9c7; }.feature-radiator { fill:#b85950; }
 [data-furniture-id] rect { fill:#b8d2c0; stroke:#244e3e; stroke-width:18; cursor:grab; } [data-furniture-id].locked rect { fill:#d3c6ad; } [data-furniture-id].selected rect { stroke:#bd5d25; stroke-width:34; } [data-furniture-id]:focus-visible rect { outline:none; stroke:#154fc4; stroke-width:42; } [data-furniture-id] text { text-anchor:middle; dominant-baseline:middle; font-size:120px; pointer-events:none; fill:#173b31; }
 .preview-ghost { pointer-events:none; opacity:.58; } .preview-ghost rect { fill:#e7c78f; stroke:#9a6426; stroke-width:22; stroke-dasharray:70 45; } .preview-ghost text { text-anchor:middle; dominant-baseline:middle; font-size:105px; fill:#754b1d; pointer-events:none; }
+.constraint-cue { pointer-events:none; }
+.constraint-cue-line { fill:none; stroke:#664b25; stroke-width:20; }
+.constraint-cue[data-strength="preferred"] .constraint-cue-line { stroke-dasharray:58 42; }
+.constraint-cue-marker { fill:#fffaf0; stroke:#664b25; stroke-width:16; }
+.constraint-cue-label { fill:#4e371d; font-size:72px; font-weight:750; paint-order:stroke; stroke:#fffaf0; stroke-width:18; stroke-linejoin:round; text-anchor:middle; }
 .inspector form { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.5rem; align-items:end; margin:.8rem 0; padding:.75rem; border-top:1px solid #dde2dc; }.inspector h3{margin:0;font-size:.9rem}.inspector input{width:100%;min-width:0}.inspector label{font-size:.75rem;color:#52665f}.inspector button{min-width:0;padding:.45rem}.layout-card>label{display:block;font-weight:700}.layout-card>label select{display:block;margin-top:.3rem;max-width:100%}[data-editor-status]{min-height:1.5em;font-weight:650}
+.constraint-references { display:grid; grid-column:1/-1; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
 
 @media (max-width: 1050px) {
   .workspace { grid-template-columns: minmax(210px,.7fr) minmax(0,1.5fr); }
@@ -269,7 +275,6 @@ thead th {
   }
   .details-card { grid-column: auto; grid-template-columns: minmax(0,1fr); }
   .details-card .inspector { grid-column: auto; }
-  .layout-card { grid-row: 1; }
 }
 
 @media (max-width: 480px) {
@@ -283,6 +288,7 @@ thead th {
   }
   .inspector form { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .room-controls form, .feature-row, .constraint-row { grid-template-columns: minmax(0,1fr); }
+  .constraint-references { grid-template-columns:minmax(0,1fr); }
   .room-controls button, .feature-row h3, .constraint-row h3 { grid-column: auto; }
   .app-shell { width: calc(100% - .5rem); padding-top: 1rem; }
   h1 { font-size: 2.8rem; }
