@@ -270,6 +270,7 @@ test.describe("precise room editor", () => {
     const context = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 800 } });
     const page = await context.newPage();
     const editor = await openEditor(page);
+    await editor.scrollIntoViewIfNeeded();
     const start = await roomPointToClient(editor, 2500, 1300);
     const target = await roomPointToClient(editor, 2550, 1300);
     const session = await context.newCDPSession(page);
