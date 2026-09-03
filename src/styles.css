@@ -15,6 +15,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  overflow-x: clip;
   background:
     radial-gradient(circle at 12% 5%, rgb(216 225 207 / 85%), transparent 30rem),
     #f1efe8;
@@ -25,6 +26,7 @@ input,
 select,
 textarea {
   font: inherit;
+  max-width: 100%;
 }
 
 .app-shell {
@@ -85,7 +87,7 @@ h3 {
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.85fr);
+  grid-template-columns: minmax(210px, 0.72fr) minmax(420px, 1.55fr) minmax(260px, 0.9fr);
   gap: 1rem;
   align-items: start;
 }
@@ -98,6 +100,36 @@ h3 {
   box-shadow: 0 18px 55px rgb(44 65 58 / 8%);
   padding: clamp(1.2rem, 3vw, 2rem);
 }
+.workspace > * { max-width: 100%; }
+
+button, select, input { min-height: 2.65rem; border: 1px solid #879b92; border-radius: .5rem; background: #fff; color: #173b31; padding: .48rem .62rem; }
+button { font-weight: 720; cursor: pointer; }
+button:hover:not(:disabled) { background: #edf3ee; border-color: #385e50; }
+button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 3px solid #1558cf; outline-offset: 3px; }
+label { display: grid; gap: .28rem; color: #405c52; font-size: .82rem; font-weight: 700; }
+.controls-card, .details-card { display: grid; gap: 1rem; align-content: start; }
+.panel-section { border-top: 1px solid #d8e0db; padding-top: 1rem; }
+.panel-section:first-child { border-top: 0; padding-top: 0; }
+.panel-section h2 { font-size: 1.05rem; }
+.section-help, .panel-section > p { color: #62736c; font-size: .82rem; line-height: 1.45; }
+.room-controls form, .catalog-controls form, .feature-row, .add-row, .constraint-row { display: grid; gap: .55rem; margin-bottom: .7rem; }
+.room-controls form > *, .catalog-controls form > *, .feature-row > *, .add-row > *, .constraint-row > *, .geometry-row > * { min-width: 0; }
+.room-controls form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.room-controls button { grid-column: 1/-1; }
+.geometry-row { grid-template-columns: repeat(2,minmax(0,1fr)); border: 1px solid #dce3de; border-radius: .65rem; }
+.inspector form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.geometry-row h3 { grid-column: 1/-1; }
+.check-label { display: flex; align-items: center; gap: .35rem; min-height: 2.65rem; }
+.check-label input { min-height: auto; }
+.inspector .check-label input { width: 1.15rem; height: 1.15rem; min-width: 1.15rem; min-height: 1.15rem; max-width: none; padding: 0; }
+.constraint-row, .feature-row { border: 1px solid #dce3de; border-radius: .65rem; padding: .7rem; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.constraint-row h3, .feature-row h3 { grid-column: 1/-1; margin: 0; overflow-wrap: anywhere; }
+.state-table { margin-top: 1.4rem; }
+.table-wrap { width: 100%; min-width: 0; }
+.state-table caption { padding: .5rem; text-align: left; font-weight: 750; }
+.capability-panel { border-top: 1px solid #d8e0db; padding-top: 1rem; }
+.capability-panel > p:last-child { color: #62736c; font-size: .83rem; line-height: 1.45; }
 
 .section-intro {
   max-width: 62ch;
@@ -220,6 +252,12 @@ thead th {
 .preview-ghost { pointer-events:none; opacity:.58; } .preview-ghost rect { fill:#e7c78f; stroke:#9a6426; stroke-width:22; stroke-dasharray:70 45; } .preview-ghost text { text-anchor:middle; dominant-baseline:middle; font-size:105px; fill:#754b1d; pointer-events:none; }
 .inspector form { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.5rem; align-items:end; margin:.8rem 0; padding:.75rem; border-top:1px solid #dde2dc; }.inspector h3{margin:0;font-size:.9rem}.inspector input{width:100%;min-width:0}.inspector label{font-size:.75rem;color:#52665f}.inspector button{min-width:0;padding:.45rem}.layout-card>label{display:block;font-weight:700}.layout-card>label select{display:block;margin-top:.3rem;max-width:100%}[data-editor-status]{min-height:1.5em;font-weight:650}
 
+@media (max-width: 1050px) {
+  .workspace { grid-template-columns: minmax(210px,.7fr) minmax(0,1.5fr); }
+  .details-card { grid-column: 1/-1; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .details-card .inspector { grid-column: 1/-1; }
+}
+
 @media (max-width: 760px) {
   .app-shell {
     width: min(100% - 1rem, 680px);
@@ -229,6 +267,9 @@ thead th {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
   }
+  .details-card { grid-column: auto; grid-template-columns: minmax(0,1fr); }
+  .details-card .inspector { grid-column: auto; }
+  .layout-card { grid-row: 1; }
 }
 
 @media (max-width: 480px) {
@@ -241,6 +282,12 @@ thead th {
     padding: 1rem;
   }
   .inspector form { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .room-controls form, .feature-row, .constraint-row { grid-template-columns: minmax(0,1fr); }
+  .room-controls button, .feature-row h3, .constraint-row h3 { grid-column: auto; }
+  .app-shell { width: calc(100% - .5rem); padding-top: 1rem; }
+  h1 { font-size: 2.8rem; }
+  .room-editor { max-height: 52vh; }
+  .preview-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

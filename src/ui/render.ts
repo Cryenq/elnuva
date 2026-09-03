@@ -10,6 +10,7 @@ export type RenderCallbacks = Readonly<{ select: (id: string) => void; drag: (ev
 export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callbacks: RenderCallbacks): SVGSVGElement {
   const state = snapshot.workingState; const el = svg("svg") as SVGSVGElement;
   el.dataset.roomEditor = ""; el.setAttribute("role", "img"); el.setAttribute("aria-label", "Room layout editor");
+  const description = svg("desc"); description.id = "room-layout-description"; description.textContent = `Interactive ${state.templateId === "home-office" ? "Home Office" : state.templateId === "bedroom" ? "Bedroom" : "Study"} plan, ${state.room.widthMm} by ${state.room.depthMm} millimetres. A matching data table follows the plan.`; el.setAttribute("aria-describedby", description.id); el.append(description);
   el.setAttribute("viewBox", `0 0 ${state.room.widthMm} ${state.room.depthMm}`); el.classList.add("room-editor");
   for (const layerName of ["grid", "features", "furniture", "constraints", "dimensions", "preview"]) { const g = svg("g"); g.dataset.layer = layerName; el.append(g); }
   const grid = el.querySelector('[data-layer="grid"]')!;
@@ -23,7 +24,7 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
   const furniture = el.querySelector('[data-layer="furniture"]')!;
   for (const item of state.furniture) { const entry=furnitureCatalogById(item.catalogId)!; const box=furnitureAabb(item); const g=svg("g") as SVGGElement; g.dataset.furnitureId=item.id; g.dataset.xMm=String(item.xMm);g.dataset.yMm=String(item.yMm);g.dataset.rotationDeg=String(item.rotationDeg);g.dataset.locked=String(item.locked);g.setAttribute("role","button");g.setAttribute("tabindex","0");g.setAttribute("aria-label",entry.label);g.setAttribute("aria-pressed",String(selected===item.id));g.classList.toggle("selected",selected===item.id);g.classList.toggle("locked",item.locked);
     const r=svg("rect");r.setAttribute("x",String(box.left2/2));r.setAttribute("y",String(box.top2/2));r.setAttribute("width",String((box.right2-box.left2)/2));r.setAttribute("height",String((box.bottom2-box.top2)/2));g.append(r); const t=svg("text");t.setAttribute("x",String(item.xMm));t.setAttribute("y",String(item.yMm));t.textContent=entry.label;g.append(t);
-    g.addEventListener("click",()=>callbacks.select(item.id)); g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();callbacks.select(item.id);}}); if(!item.locked) g.addEventListener("pointerdown",e=>callbacks.drag(e,item.id,g)); furniture.append(g); }
+    g.setAttribute("aria-description",`${item.id}, x ${item.xMm} millimetres, y ${item.yMm} millimetres, rotation ${item.rotationDeg} degrees, ${item.locked ? "locked" : "unlocked"}`); g.addEventListener("click",()=>callbacks.select(item.id)); g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();callbacks.select(item.id);}}); if(!item.locked) g.addEventListener("pointerdown",e=>callbacks.drag(e,item.id,g)); furniture.append(g); }
   const dimensions=el.querySelector('[data-layer="dimensions"]')!; const text=svg("text");text.setAttribute("x","25");text.setAttribute("y","55");text.textContent=`${state.room.widthMm} × ${state.room.depthMm} mm`;dimensions.append(text);
   const previewLayer = el.querySelector('[data-layer="preview"]')!;
   if (snapshot.preview) {
@@ -39,7 +40,7 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
       ghost.dataset.rotationDeg = String(item.rotationDeg);
       ghost.classList.add("preview-ghost");
       ghost.setAttribute("role", "img");
-      ghost.setAttribute("aria-label", `Preview ghost: ${entry.label}`);
+      ghost.setAttribute("aria-label", `Preview ghost: ${entry.label}; not applied`);
       const title = svg("title");
       title.textContent = `Preview ghost: ${entry.label}; not applied`;
       ghost.append(title);
