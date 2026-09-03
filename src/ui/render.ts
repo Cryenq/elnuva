@@ -25,5 +25,28 @@ export function roomSvg(snapshot: StoreSnapshot, selected: string | null, callba
     const r=svg("rect");r.setAttribute("x",String(box.left2/2));r.setAttribute("y",String(box.top2/2));r.setAttribute("width",String((box.right2-box.left2)/2));r.setAttribute("height",String((box.bottom2-box.top2)/2));g.append(r); const t=svg("text");t.setAttribute("x",String(item.xMm));t.setAttribute("y",String(item.yMm));t.textContent=entry.label;g.append(t);
     g.addEventListener("click",()=>callbacks.select(item.id)); g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();callbacks.select(item.id);}}); if(!item.locked) g.addEventListener("pointerdown",e=>callbacks.drag(e,item.id,g)); furniture.append(g); }
   const dimensions=el.querySelector('[data-layer="dimensions"]')!; const text=svg("text");text.setAttribute("x","25");text.setAttribute("y","55");text.textContent=`${state.room.widthMm} × ${state.room.depthMm} mm`;dimensions.append(text);
+  const previewLayer = el.querySelector('[data-layer="preview"]')!;
+  if (snapshot.preview) {
+    for (const item of snapshot.preview.projectedFurniture) {
+      const current = state.furniture.find(candidate => candidate.id === item.id);
+      if (!current || (current.xMm === item.xMm && current.yMm === item.yMm && current.rotationDeg === item.rotationDeg)) continue;
+      const entry = furnitureCatalogById(item.catalogId)!;
+      const box = furnitureAabb(item);
+      const ghost = svg("g") as SVGGElement;
+      ghost.dataset.previewFurnitureId = item.id;
+      ghost.classList.add("preview-ghost");
+      ghost.setAttribute("role", "img");
+      ghost.setAttribute("aria-label", `Preview ghost: ${entry.label}`);
+      const title = svg("title");
+      title.textContent = `Preview ghost: ${entry.label}; not applied`;
+      ghost.append(title);
+      const rect = svg("rect");
+      rect.setAttribute("x", String(box.left2 / 2)); rect.setAttribute("y", String(box.top2 / 2));
+      rect.setAttribute("width", String((box.right2 - box.left2) / 2)); rect.setAttribute("height", String((box.bottom2 - box.top2) / 2));
+      ghost.append(rect);
+      const label = svg("text"); label.setAttribute("x", String(item.xMm)); label.setAttribute("y", String(item.yMm)); label.textContent = `Preview: ${entry.label}`; ghost.append(label);
+      previewLayer.append(ghost);
+    }
+  }
   return el;
 }

@@ -217,6 +217,7 @@ thead th {
 .grid-line { stroke:#dce4dc; stroke-width:8; }
 .feature-door { fill:#c58450; }.feature-window { fill:#78a9c7; }.feature-radiator { fill:#b85950; }
 [data-furniture-id] rect { fill:#b8d2c0; stroke:#244e3e; stroke-width:18; cursor:grab; } [data-furniture-id].locked rect { fill:#d3c6ad; } [data-furniture-id].selected rect { stroke:#bd5d25; stroke-width:34; } [data-furniture-id]:focus-visible rect { outline:none; stroke:#154fc4; stroke-width:42; } [data-furniture-id] text { text-anchor:middle; dominant-baseline:middle; font-size:120px; pointer-events:none; fill:#173b31; }
+.preview-ghost { pointer-events:none; opacity:.58; } .preview-ghost rect { fill:#e7c78f; stroke:#9a6426; stroke-width:22; stroke-dasharray:70 45; } .preview-ghost text { text-anchor:middle; dominant-baseline:middle; font-size:105px; fill:#754b1d; pointer-events:none; }
 .inspector form { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.5rem; align-items:end; margin:.8rem 0; padding:.75rem; border-top:1px solid #dde2dc; }.inspector h3{margin:0;font-size:.9rem}.inspector input{width:100%;min-width:0}.inspector label{font-size:.75rem;color:#52665f}.inspector button{min-width:0;padding:.45rem}.layout-card>label{display:block;font-weight:700}.layout-card>label select{display:block;margin-top:.3rem;max-width:100%}[data-editor-status]{min-height:1.5em;font-weight:650}
 
 @media (max-width: 760px) {
