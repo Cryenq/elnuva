@@ -82,6 +82,95 @@ async function viewStamp(page: Page) {
   }));
 }
 
+for (const width of [320, 390]) {
+  test(`POLISH-03 R1 ${width}px fresh-entry actions meet the narrow pointer target before entering`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await capture(page); await page.goto("/");
+    const entry = page.locator("[data-workspace-entry]");
+    await expect(entry).toBeVisible();
+    const before = await inspect(page), saved = await storage(page);
+    const controls = entry.getByRole("button");
+    await expect(controls).toHaveCount(4);
+    await expect(controls).toHaveText(["Start designing", "Use Home Office template", "Use Bedroom template", "Use Study template"]);
+    expect(await controls.evaluateAll(nodes => nodes.map(node => node.getAttribute("data-focus-key"))))
+      .toEqual(["workspace:start", "welcome:home-office", "welcome:bedroom", "welcome:study"]);
+    for (const control of await controls.all()) {
+      await control.scrollIntoViewIfNeeded(); await containedInViewport(control);
+      const box = await control.boundingBox(); expect(box).not.toBeNull();
+      expect(box!.height, `Fresh-entry target: ${await control.innerText()}`).toBeGreaterThanOrEqual(44);
+    }
+    await noPageOverflow(page);
+    expect(await inspect(page)).toEqual(before); expect(await storage(page)).toEqual(saved);
+    await enterWorkspace(page);
+    expect(await inspect(page)).toEqual(before); expect(await storage(page)).toEqual(saved);
+  });
+}
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768 }]) {
+  test(`POLISH-04 R1 ${viewport.width}x${viewport.height} feedback preserves the SVG mapping through a fixed-coordinate drag`, async ({ page }) => {
+    await page.setViewportSize(viewport); await open(page); await setView(page, "precision-2d");
+    const form = await selectFurniture(page, "chair-main");
+    const svg = page.locator("svg[data-room-editor]");
+    await expect(svg).toHaveCount(1); await expect(svg).toBeVisible(); await svg.scrollIntoViewIfNeeded();
+    const originalSvg = await svg.elementHandle(); expect(originalSvg).not.toBeNull();
+    const before = await inspect(page), saved = await storage(page);
+    const chair = svg.locator('[data-furniture-id="chair-main"]');
+    await expect(chair).toHaveAttribute("data-x-mm", "2500"); await expect(chair).toHaveAttribute("data-y-mm", "1300");
+    // Every screen point is captured from the same pre-drag CTM. Recomputing a
+    // target after feedback has shifted the SVG would conceal this regression.
+    const original = await svg.evaluate(node => {
+      const matrix = (node as SVGGraphicsElement).getScreenCTM();
+      if (!matrix) throw new Error("Missing pre-drag SVG screen CTM");
+      const rect = node.getBoundingClientRect();
+      return {
+        rect: [rect.x, rect.y, rect.width, rect.height],
+        matrix: [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f],
+        points: [[2500, 1300], [2500, 2200], [2500, 500], [2550, 2200]].map(([x, y]) => {
+          const point = new DOMPoint(x, y).matrixTransform(matrix); return { x: point.x, y: point.y };
+        }),
+      };
+    });
+    const transitions = [
+      { xMm: 2500, yMm: 2200, state: "warning", text: /Constraint warning.*(?:required|preferred).*Moving is allowed/i },
+      { xMm: 2500, yMm: 500, state: "blocked", text: /Blocked.*chair-main.*desk-main/i },
+      { xMm: 2550, yMm: 2200, state: "warning", text: /Constraint warning.*(?:required|preferred).*Moving is allowed/i },
+    ];
+    await page.mouse.move(original.points[0].x, original.points[0].y); await page.mouse.down();
+    for (const [index, transition] of transitions.entries()) {
+      const point = original.points[index + 1]; await page.mouse.move(point.x, point.y);
+      const feedback = page.locator('[data-placement-feedback][aria-live="polite"]').filter({ visible: true });
+      await expect(feedback).toHaveCount(1); await expect(feedback).toHaveAttribute("data-placement-state", transition.state);
+      await expect(feedback).toContainText(transition.text);
+      const current = await svg.evaluate(node => {
+        const matrix = (node as SVGGraphicsElement).getScreenCTM();
+        if (!matrix) throw new Error("Missing held-drag SVG screen CTM");
+        const rect = node.getBoundingClientRect();
+        return { rect: [rect.x, rect.y, rect.width, rect.height], matrix: [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f] };
+      });
+      expect(current.rect, `${transition.state} feedback must not resize or reposition the held SVG`).toEqual(original.rect);
+      expect(current.matrix, `${transition.state} feedback must not change the pointer coordinate mapping`).toEqual(original.matrix);
+      expect(await originalSvg!.evaluate(node => node === document.querySelector("svg[data-room-editor]"))).toBe(true);
+      await expect(chair).toHaveAttribute("data-x-mm", String(transition.xMm));
+      await expect(chair).toHaveAttribute("data-y-mm", String(transition.yMm));
+      await expect(form.getByRole("spinbutton", { name: "X position (mm)", exact: true })).toHaveValue("2500");
+      await expect(form.getByRole("spinbutton", { name: "Y position (mm)", exact: true })).toHaveValue("1300");
+      expect(await inspect(page)).toEqual(before); expect(await storage(page)).toEqual(saved);
+    }
+    await page.mouse.up();
+    await expect.poll(async () => (await inspect(page)).baseRevision).toBe(before.baseRevision + 1);
+    const after = await inspect(page);
+    expect(after.workingState).toEqual({ ...before.workingState, furniture: before.workingState.furniture.map((item: any) =>
+      item.id === "chair-main" ? { ...item, xMm: 2550, yMm: 2200 } : item) });
+    expect(after.baseHash).not.toBe(before.baseHash); expect(after.preview).toEqual({ status: "none" });
+    await expect(form.getByRole("spinbutton", { name: "X position (mm)", exact: true })).toHaveValue("2550");
+    await expect(form.getByRole("spinbutton", { name: "Y position (mm)", exact: true })).toHaveValue("2200");
+    await expect(page.locator("[data-placement-feedback]").filter({ visible: true })).toHaveCount(0);
+    const released = await svg.boundingBox(); expect(released).not.toBeNull();
+    expect([released!.x, released!.y, released!.width, released!.height]).toEqual(original.rect);
+    expect(await storage(page)).toEqual(saved); await originalSvg!.dispose();
+  });
+}
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768 }]) {
   test(`POLISH-01/02 ${viewport.width}x${viewport.height} gives the real persistent scene priority in every dock state`, async ({ page }) => {
     await page.setViewportSize(viewport);

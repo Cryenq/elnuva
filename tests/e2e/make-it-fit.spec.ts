@@ -132,6 +132,7 @@ test.describe("explicit full-state Make it Fit workflow", () => {
     // preview object or a production debug API. All duplicate readouts must agree.
     type Ghost = { id: string; xMm: number; yMm: number; rotationDeg: number; widthMm: number; depthMm: number };
     const viewTargets: Array<{ room: { widthMm: number; depthMm: number }; furniture: Ghost[] }> = [];
+    await openPanel(page, "properties");
     for (const mode of ["precision-2d", "top", "isometric"] as const) {
       await setView(page, mode);
       const rooms = page.locator("[data-fit-target-room]").filter({ visible: true }); expect(await rooms.count()).toBeGreaterThan(0);
@@ -166,6 +167,7 @@ test.describe("explicit full-state Make it Fit workflow", () => {
       viewTargets.push(shown);
       expect(await inspect(page)).toEqual(preview);
     }
+    await openPanel(page, "fit");
     for (const label of ["Fit room width (mm)", "Fit room depth (mm)", "Furniture to request"]) await expect(page.getByLabel(label, { exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Apply preview", exact: true }).click();
