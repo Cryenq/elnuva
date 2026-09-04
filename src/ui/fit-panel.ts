@@ -76,8 +76,14 @@ export function createFitPanel(store: DomainStore, beforeStart: () => void) {
   function renderStatus(): void {
     const preview = snapshot?.preview;
     const reviewingResult = preview?.status === "pending-human-fit" && preview.request.requestId === progress.requestId;
-    const message = progress.status === "FOUND" && !reviewingResult
-      ? "Last completed fit search found an arrangement."
+    const historical = progress.status !== "IDLE" && progress.status !== "RUNNING"
+      && !(progress.status === "FOUND" && reviewingResult);
+    const outcome = progress.status === "FOUND" ? "An arrangement was found."
+      : progress.status === "ALREADY_FITS" ? "The layout at that time already satisfied that request."
+        : progress.status === "INVALID_REQUEST" ? "That request was invalid. Check the target room and requested furniture before a new run."
+          : progress.message;
+    const message = historical
+      ? `Last evaluated request: ${outcome} Later room or furniture-request changes are not covered by this result.`
       : progress.message;
     status.dataset.fitState = progress.status;
     const text = `${message} Elapsed ${Math.round(progress.elapsedMs)} / ${progress.budgetMs} ms.`;
