@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls, openReviewDetails } from "./workspace-helpers";
 
 async function installCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -138,6 +138,7 @@ test.describe("T08 accessibility and truthful state", () => {
     await expect(page.getByRole("button", { name: "Apply preview" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Discard preview" })).toBeEnabled();
     await expect(page.locator('[data-layer="preview"] .preview-ghost')).toHaveAttribute("aria-label", /preview ghost.*not applied/i);
+    await openReviewDetails(page);
     await expect(page.locator("[data-preview-review]")).toContainText(/required constraints.*2\/2/i);
     await page.getByRole("button", { name: "Discard preview" }).focus();
     await page.keyboard.press("Enter");

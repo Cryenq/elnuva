@@ -67,6 +67,8 @@ async function uiStamp(page: Page) {
     selected: Array.from(document.querySelectorAll('[data-scene-item-list] button[aria-pressed="true"]'), node => node.getAttribute("aria-label") ?? node.textContent),
     focus: document.activeElement?.getAttribute("data-focus-key") ?? document.activeElement?.textContent,
     editorStatus: document.querySelector("[data-editor-status]")?.textContent,
+    panels: Array.from(document.querySelectorAll("[data-panel-toggle]"), node => [node.getAttribute("data-panel-toggle"), node.getAttribute("aria-expanded")]),
+    capability: [document.querySelector(".capability-status")?.getAttribute("data-state"), document.querySelector(".capability-status")?.textContent],
   }));
 }
 
@@ -225,6 +227,8 @@ test.describe("T09 interactive spatial workspace", () => {
     expect(stagedUi.modes).toEqual(ui.modes);
     expect(stagedUi.selected).toEqual(ui.selected);
     expect(stagedUi.focus).toBe(ui.focus);
+    expect(stagedUi.panels).toEqual(ui.panels);
+    expect(stagedUi.capability).toEqual(ui.capability);
     await expect(page.locator("[data-preview-review]")).toContainText(/not applied.*not saved/is);
     const ghost = page.locator('[data-spatial-preview-item-id="desk-main"]');
     await expect(ghost).toHaveCount(1);

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { enterWorkspace, setView } from "./workspace-helpers";
+import { enterWorkspace, setView, openPanel, openReviewDetails } from "./workspace-helpers";
 import type { InspectSpatialLayoutData, ToolResult, WorkingState } from "../../src/domain/types";
 
 const initial: WorkingState = { schemaVersion: 1, templateId: "home-office", room: { widthMm: 3000, depthMm: 3000 },
@@ -14,6 +14,7 @@ async function setup(page: Page, state = initial) {
     Object.assign(window, { __fitTestTools: tools });
   }, state);
   await page.goto("/"); await enterWorkspace(page); await setView(page, "precision-2d");
+  await openPanel(page, "fit");
   const panel = page.locator("section[data-fit-panel]"); await expect(panel).toHaveCount(1);
   const closed = panel.locator("details:not([open]) > summary");
   if (await closed.count()) await closed.click();
@@ -37,7 +38,7 @@ async function queueChair(page: Page) {
 async function start(page: Page) {
   await page.getByLabel("Fit room width (mm)", { exact: true }).fill("3500");
   await page.getByLabel("Fit room depth (mm)", { exact: true }).fill("3200");
-  await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+  await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
   await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "FOUND", { timeout: 17000 });
 }
 
@@ -121,6 +122,7 @@ test.describe("explicit full-state Make it Fit workflow", () => {
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved); await start(page);
     const review = page.locator("[data-review-dock] [data-human-fit-preview]"); await expect(review).toBeVisible();
     await expect(review.getByRole("heading", { name: "Make it Fit preview — Not applied — Not saved", exact: true })).toBeVisible();
+    await openReviewDetails(page);
     await expect(review).toContainText(/3000.*3000/); await expect(review).toContainText(/3500.*3200/); await expect(review).toContainText(id);
     await expect(review).toContainText(/600.*600/); await expect(review).toContainText(/required/i); await expect(review).toContainText(/preferred/i);
     const preview = await inspect(page); expect(preview.workingState).toEqual(before.workingState); expect(preview.baseHash).toBe(before.baseHash); expect(preview.baseRevision).toBe(before.baseRevision);
@@ -190,11 +192,13 @@ test.describe("explicit full-state Make it Fit workflow", () => {
   test("leaves failed normal Add out of the request queue until a separate explicit action", async ({ page }) => {
     const full: WorkingState = { ...initial, room: { widthMm: 2000, depthMm: 2000 }, furniture: [{ id: "bed-main", catalogId: "bed-2000x1600", xMm: 1000, yMm: 1000, rotationDeg: 0, locked: false }] };
     await setup(page, full); const before = await inspect(page), saved = await persisted(page);
+    await openPanel(page, "add");
     await page.getByRole("combobox", { name: "Add furniture", exact: true }).selectOption("chair-600x600");
     await page.getByRole("button", { name: "Add selected furniture", exact: true }).click();
     await expect(page.locator("[data-fit-request-list] [data-fit-request-id]")).toHaveCount(0);
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
     await page.getByRole("button", { name: "Request this furniture for Make it Fit", exact: true }).click();
+    await expect(page.locator('[data-workspace-panel="fit"]')).toBeVisible();
     await expect(page.locator("[data-fit-request-list] [data-fit-request-id]")).toHaveCount(1);
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
   });
@@ -237,7 +241,7 @@ test.describe("completed fit outcomes remain scoped to the evaluated request", (
   test("ALREADY_FITS stays historical after Reset changes the working room", async ({ page }) => {
     await setup(page); const before = await inspect(page), saved = await persisted(page);
     const workers: string[] = []; page.on("worker", worker => workers.push(worker.url()));
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "ALREADY_FITS");
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved); expect(workers).toEqual([]);
     await page.getByRole("button", { name: "Reset", exact: true }).click();
@@ -254,7 +258,7 @@ test.describe("completed fit outcomes remain scoped to the evaluated request", (
 
   for (const change of ["room input", "requested addition"] as const) test(`ALREADY_FITS stays historical after editing ${change} and a fresh run has current preview guidance`, async ({ page }) => {
     await setup(page); const before = await inspect(page), saved = await persisted(page);
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "ALREADY_FITS");
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
     if (change === "room input") {
@@ -268,7 +272,7 @@ test.describe("completed fit outcomes remain scoped to the evaluated request", (
     await expect(page.getByLabel("Fit room depth (mm)", { exact: true })).toHaveValue("3000");
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
     await expectLastRequestOutcome(page, "ALREADY_FITS");
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "FOUND", { timeout: 17000 });
     await expectCurrentPendingGuidance(page);
     await expect(page.locator("[data-fit-status]")).toContainText(/ready for review/i);
@@ -288,7 +292,7 @@ test.describe("completed fit outcomes remain scoped to the evaluated request", (
     const rows = page.locator("[data-fit-request-list] [data-fit-request-id]"); await expect(rows).toHaveCount(2);
     for (const row of await rows.all()) await expect(row).toContainText(/2000.*1600/);
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     const status = page.locator("[data-fit-status]");
     await expect(status).toHaveAttribute("data-fit-state", "PROVEN_IMPOSSIBLE", { timeout: 17000 });
     await expect(status).toContainText("No arrangement exists within this 2D model and its required constraints.");
@@ -302,7 +306,7 @@ test.describe("completed fit outcomes remain scoped to the evaluated request", (
     await expect(page.getByLabel("Fit room depth (mm)", { exact: true })).toHaveValue("2000");
     await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0);
     await expectLastRequestOutcome(page, "PROVEN_IMPOSSIBLE");
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     await expect(status).toHaveAttribute("data-fit-state", "ALREADY_FITS");
     await expect(status).not.toContainText("No arrangement exists within this 2D model and its required constraints.");
     expect(workers).toHaveLength(1); expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);

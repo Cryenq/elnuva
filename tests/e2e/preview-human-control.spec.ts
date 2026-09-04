@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls, openReviewDetails } from "./workspace-helpers";
 
 type Tool = { execute: (input: unknown, options: { signal: AbortSignal }) => Promise<any> };
 const moveSets = {
@@ -54,6 +54,7 @@ test.describe("T07 preview review and human control", () => {
       await installCapture(page); await openWorkspace(page);
       const result = await stage(page, template);
       expect(result.ok).toBe(true);
+      await openReviewDetails(page);
       await expect(page.locator('[data-preview-review] [data-option-id]')).toHaveAttribute("data-option-id", moveSets[template].optionId);
       await expect(page.locator("[data-preview-review]")).toContainText(/Required constraints/i);
       await expect(page.locator("[data-preview-review]")).toContainText(/Preferred constraints/i);

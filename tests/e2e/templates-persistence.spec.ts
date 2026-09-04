@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView } from "./workspace-helpers";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, openPanel } from "./workspace-helpers";
 
 const factories = {
   "home-office": {
@@ -188,6 +188,7 @@ test.describe("T08 templates and persistence", () => {
     await expect(row(page, "storage-main")).toHaveCount(0);
     await expect(page.locator('[data-scene-item-list] [data-spatial-item-id="storage-main"]')).toHaveCount(0);
     await expect(page.locator('[data-scene-item-list] [data-spatial-item-id]')).toHaveCount(2);
+    await openPanel(page, "add");
     const add = page.getByRole("combobox", { name: "Add furniture" });
     await add.selectOption("storage-800x400");
     await page.getByRole("button", { name: "Add selected furniture" }).click();
@@ -214,17 +215,20 @@ test.describe("T08 templates and persistence", () => {
 
     const addFurniture = page.getByRole("combobox", { name: "Add furniture" });
     for (const catalogId of ["bed-2000x1600", "nightstand-500x400", "wardrobe-1200x600", "table-1200x800", "bookcase-800x350"]) {
+      await openPanel(page, "add");
       await addFurniture.selectOption(catalogId);
       await page.getByRole("button", { name: "Add selected furniture" }).click();
     }
     await expect(page.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(8);
     const furnitureCapRevision = await summary(page, "Revision").textContent();
+    await openPanel(page, "add");
     const furnitureAdd = page.getByRole("button", { name: "Add selected furniture" });
     await expect(furnitureAdd).toBeDisabled();
     await furnitureAdd.evaluate((button: HTMLButtonElement) => button.click());
     await expect(page.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(8);
     await expect(summary(page, "Revision")).toHaveText(furnitureCapRevision!);
     await expect(page.locator('[data-editor-status][role="status"]')).toContainText(/maximum.*8/i);
+    await openPanel(page, "properties");
     for (let index = 4; index < 8; index += 1) await page.getByRole("button", { name: "Add constraint" }).click();
     await expect(page.locator("[data-constraint-row]")).toHaveCount(8);
     const constraintCapRevision = await summary(page, "Revision").textContent();

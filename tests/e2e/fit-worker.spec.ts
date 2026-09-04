@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { enterWorkspace } from "./workspace-helpers";
+import { enterWorkspace, openPanel } from "./workspace-helpers";
 import type { WorkingState } from "../../src/domain/types";
 
 const empty: WorkingState = { schemaVersion: 1, templateId: "home-office", room: { widthMm: 2000, depthMm: 2000 }, furniture: [], features: [], constraints: [] };
@@ -12,7 +12,7 @@ async function open(page: Page, state = empty) {
       (window as unknown as { __fitCspViolations: string[] }).__fitCspViolations.push(`${event.violatedDirective}:${event.blockedURI}`);
     });
   }, state);
-  await page.goto("/"); await enterWorkspace(page);
+  await page.goto("/"); await enterWorkspace(page); await openPanel(page, "fit");
   const closed = page.locator("[data-fit-panel] details:not([open]) > summary"); if (await closed.count()) await closed.click();
 }
 async function queue(page: Page, catalogId: string) {
@@ -31,7 +31,7 @@ test.describe("real bundled Worker execution (no Worker stub)", () => {
       const response = await route.fetch(); await route.fulfill({ response, headers: { ...response.headers(), "content-security-policy": policy } });
     });
     await open(page); const saved = await page.evaluate(() => Object.entries(localStorage)); await queue(page, "chair-600x600");
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "FOUND", { timeout: 17000 });
     expect(workerUrls).toHaveLength(1); expect(workerUrls[0]).toMatch(/\/assets\/fit-worker-[^/]+\.js$/);
     expect(new URL(workerUrls[0]).origin).toBe(new URL(page.url()).origin);
@@ -43,7 +43,7 @@ test.describe("real bundled Worker execution (no Worker stub)", () => {
   test("reports real finite UNSAT for two full-size beds in the legal minimum room", async ({ page }) => {
     const workers: string[] = []; page.on("worker", worker => { workers.push(worker.url()); }); await open(page);
     await queue(page, "bed-2000x1600"); await queue(page, "bed-2000x1600"); const saved = await page.evaluate(() => Object.entries(localStorage));
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click();
     const status = page.locator("[data-fit-status]"); await expect(status).toHaveAttribute("data-fit-state", "PROVEN_IMPOSSIBLE", { timeout: 17000 });
     await expect(status).toContainText("No arrangement exists within this 2D model and its required constraints.");
     expect(workers).toHaveLength(1); await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0);
@@ -61,7 +61,7 @@ test.describe("real bundled Worker execution (no Worker stub)", () => {
       } finally { delivered.resolve(); }
     });
     await open(page); await queue(page, "chair-600x600"); const saved = await page.evaluate(() => Object.entries(localStorage));
-    await page.getByRole("button", { name: "Make it Fit", exact: true }).click(); await entered.promise;
+    await page.locator("[data-fit-panel]").getByRole("button", { name: "Make it Fit", exact: true }).click(); await entered.promise;
     const cancel = page.getByRole("button", { name: "Cancel fit", exact: true }); await expect(cancel).toBeEnabled();
     await cancel.focus(); await page.keyboard.press("Enter"); await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "CANCELLED");
     release.resolve(); await delivered.promise;

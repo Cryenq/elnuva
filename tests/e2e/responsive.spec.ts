@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls } from "./workspace-helpers";
+import { openWorkspace, preparePrecisionWorkspace, selectFurniture, openSection, setView, expectPendingMutationControls, openPanel, openReviewDetails, expectCompactFocusOrder } from "./workspace-helpers";
 
 async function installCapture(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -22,6 +22,7 @@ async function stageHome(page: Page): Promise<void> {
 const overflow = (page: Page) => page.evaluate(() => ({ viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth, body: document.body.scrollWidth }));
 
 async function expectReadablePreviewMetrics(page: Page): Promise<void> {
+  await openReviewDetails(page);
   const metrics = page.locator("[data-preview-review] .preview-metrics");
   await expect(metrics.locator(":scope > div > dt")).toHaveText([
     "Option", "Moved", "Rotated", "Movement", "Clearance",
@@ -159,62 +160,31 @@ for (const viewport of [
 }
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }] as const) {
-  test(`${viewport.width}px keeps visual card order aligned with DOM and keyboard order`, async ({ page }) => {
+  test(`${viewport.width}px keeps compact workspace visual order aligned with complete DOM and keyboard order`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await openWorkspace(page);
-    const template = page.getByRole("combobox", { name: "Room template" });
     await selectFurniture(page, "chair-main");
-    // Measure every actual workspace card, including the catalog/scene rail.
-    const cards = page.locator("[data-workspace] > .card");
-    await expect(cards).toHaveCount(3);
-    const cardOrder = await cards.evaluateAll(nodes => nodes.map(node => {
-      const roles = ["layout-card", "controls-card", "details-card"].filter(name => node.classList.contains(name));
-      if (roles.length !== 1) throw new Error("Workspace card must have exactly one known role");
-      const box = node.getBoundingClientRect();
-      return { role: roles[0], top: box.top, bottom: box.bottom, width: box.width, height: box.height };
-    }));
-    expect(cardOrder.map(card => card.role)).toEqual(["layout-card", "controls-card", "details-card"]);
-    expect([...cardOrder].sort((a, b) => a.top - b.top).map(card => card.role)).toEqual(cardOrder.map(card => card.role));
-    for (const card of cardOrder) {
-      expect(card.width).toBeGreaterThan(0);
-      expect(card.height).toBeGreaterThan(0);
-    }
-    expect(cardOrder[0].bottom).toBeLessThanOrEqual(cardOrder[1].top);
-    expect(cardOrder[1].bottom).toBeLessThanOrEqual(cardOrder[2].top);
-    await expect(cards.nth(0).locator("svg[data-room-editor]")).toHaveCount(1);
-    await expect(cards.nth(1).getByRole("combobox", { name: "Add furniture", exact: true })).toHaveCount(1);
-    await expect(cards.nth(1).locator("[data-scene-item-list]")).toHaveCount(1);
-    await expect(cards.nth(1).locator("[data-spatial-item-id]")).toHaveCount(3);
-    await expect(cards.nth(2).locator('form[data-geometry-row][data-item-id="chair-main"]')).toHaveCount(1);
-    await expect(cards.nth(2).locator("details[data-workspace-section]")).toHaveCount(4);
-    // Close disclosures via their real controls so the complete cross-card tab
-    // sequence is explicit and stable, rather than accepting any visible focus.
+    const properties = page.locator('[data-workspace-panel="properties"]');
+    await expect(page.locator("[data-workspace-panel]")).toHaveCount(3);
+    await expect(properties).toBeVisible();
+    await expect(properties.locator("[data-scene-item-list] [data-spatial-item-id]")).toHaveCount(3);
+    await expect(properties.locator('form[data-geometry-row][data-item-id="chair-main"]')).toHaveCount(1);
+    await expect(properties.locator("details[data-workspace-section]")).toHaveCount(4);
+    await expect(page.locator('[data-workspace-panel="add"]').getByRole("combobox", { name: "Add furniture", exact: true, includeHidden: true })).toHaveCount(1);
+    const order = await page.locator("svg[data-room-editor]").evaluate(svg => {
+      const dock = document.querySelector('[data-workspace-panel="properties"]')!;
+      return { before: !!(svg.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING),
+        sceneBottom: svg.getBoundingClientRect().bottom, dockTop: dock.getBoundingClientRect().top };
+    });
+    expect(order.before).toBe(true);
+    expect(order.sceneBottom).toBeLessThanOrEqual(order.dockTop + 1);
     for (const section of ["room", "features", "constraints", "layout-data"]) {
       const disclosure = page.locator(`details[data-workspace-section="${section}"]`);
       await expect(disclosure).toHaveJSProperty("open", true);
       await disclosure.locator(":scope > summary").click();
       await expect(disclosure).toHaveJSProperty("open", false);
     }
-    await expect(page.locator('[tabindex]:not([tabindex="0"]):not([tabindex="-1"])')).toHaveCount(0);
-    await template.focus();
-    await expect(template).toBeFocused();
-    const expectedFocusKeys = [
-      "layout:save", "layout:undo", "layout:reset",
-      "view:isometric", "view:top", "view:precision-2d", "view:reset",
-      "plan:furniture:chair-main", "plan:furniture:desk-main", "plan:furniture:storage-main",
-      "furniture:catalog", "furniture:add",
-      "scene:chair-main", "scene:desk-main", "scene:storage-main",
-      "furniture:chair-main:xMm", "furniture:chair-main:yMm", "furniture:chair-main:rotationDeg",
-      "furniture:chair-main:lock", "furniture:chair-main:rotate", "furniture:chair-main:update", "furniture:chair-main:delete",
-      "section:room", "section:features", "section:constraints", "section:layout-data",
-    ];
-    for (const key of expectedFocusKeys) {
-      const target = page.locator(`[data-focus-key="${key}"]`);
-      await expect(target).toHaveCount(1);
-      await page.keyboard.press("Tab");
-      await expect(target, `Tab must reach ${key} in workspace DOM/visual order`).toBeFocused();
-      await expect(target).toBeVisible();
-    }
+    await expectCompactFocusOrder(page, "properties", true);
     await page.keyboard.press("Enter");
     await expect(page.locator('details[data-workspace-section="layout-data"]')).toHaveJSProperty("open", true);
     await expect(page.locator("[data-layout-table]")).toBeVisible();
@@ -283,9 +253,12 @@ async function furnitureReadabilityViolations(page: Page): Promise<string[]> {
       const id = form.getAttribute("data-item-id")!;
       const formBox = rect(form.getBoundingClientRect());
       const inspectorBox = rect(form.closest(".inspector")!.getBoundingClientRect());
-      const cells = Array.from(form.querySelectorAll(":scope > label, :scope > button"), element => ({
+      const cells = Array.from(form.querySelectorAll("label, button"), element => ({
         element, name: element.textContent!.trim(), box: rect(element.getBoundingClientRect()),
       }));
+      if (cells.length !== 7 || form.querySelectorAll("label").length !== 4 || form.querySelectorAll("input").length !== 4 || form.querySelectorAll("button").length !== 3) {
+        violations.push(`${id} must expose exactly four labels, four inputs and three actions; grouped traversal must not skip controls`);
+      }
       const runs: { name: string; box: Box }[] = [];
       const inputs: { name: string; box: Box }[] = [];
       const checkBounds = (name: string, box: Box, boundaries: readonly (readonly [string, Box])[]) => {
@@ -398,7 +371,11 @@ for (const viewport of [
       for (const [id, xMm, yMm, locked] of furnitureFactories[templateId]) {
         const form = await selectFurniture(page, id);
         await form.scrollIntoViewIfNeeded();
-        await expect(form.locator(":scope > label")).toHaveText(["X position (mm)", "Y position (mm)", "Rotation", " Locked"]);
+        await expect(form.locator("label")).toHaveCount(4);
+        const visibleLabels = await form.locator("label").allTextContents();
+        expect(visibleLabels[0]).toMatch(/^X(?: position)?(?: \(mm\)|\s*mm)$/);
+        expect(visibleLabels[1]).toMatch(/^Y(?: position)?(?: \(mm\)|\s*mm)$/);
+        expect(visibleLabels.slice(2).map(text => text.trim())).toEqual(["Rotation", "Locked"]);
         for (const name of ["Update furniture", "Delete furniture"]) await expect(form.getByRole("button", { name, exact: true })).toHaveCount(1);
         for (const [name, value] of [["X position (mm)", xMm], ["Y position (mm)", yMm], ["Rotation", "0"]]) {
           const input = form.getByRole("spinbutton", { name, exact: true });
