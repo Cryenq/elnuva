@@ -72,7 +72,7 @@ p { line-height: 1.5; }
 .layout-card { grid-column: 1; grid-row: 2; min-height: 0; position: relative; background: #eeeae0; }
 .spatial-host { width: 100%; height: 100%; min-height: 0; position: relative; background: #eeeae0; overflow: hidden; }
 .spatial-host canvas { display: block; max-width: 100%; width: 100%; height: 100%; touch-action: none; }
-.precision-host { height: 100%; min-height: 0; padding: 12px; background: #eeeee5; display: flex; align-items: center; justify-content: center; }
+.precision-host { position: relative; height: 100%; min-height: 0; padding: 12px; background: #eeeee5; display: flex; align-items: center; justify-content: center; }
 .app-shell:not([data-entered="true"]) .layout-card { height: clamp(360px,60vh,720px); }
 .workspace-dock { grid-column: 2; grid-row: 2; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--paper); border-left: 1px solid #d2d8ce; }
 [data-workspace-panel] { min-width: 0; padding: 0 12px 12px; }
@@ -210,6 +210,7 @@ dd { margin: 4px 0 0; color: #2f4b39; font-size: .76rem; font-weight: 650; overf
 .fit-target-room { fill: #d9af6420; stroke: #956021; stroke-width: 28; stroke-dasharray: 90 50; pointer-events: none; }
 .fit-target-label { fill: #754b1d; font-size: 72px; pointer-events: none; }
 .placement-feedback { margin: .6rem 0 0; padding: .65rem; border: 2px dashed currentColor; border-radius: .35rem; background: #fffaf3; font-size: .8rem; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; pointer-events: none; }
+.precision-host > .placement-feedback { position: absolute; z-index: 2; bottom: .6rem; left: .6rem; right: .6rem; }
 .placement-feedback[data-placement-state="blocked"] { color: #b8302b; }
 .placement-feedback[data-placement-state="warning"] { color: #79500f; }
 .spatial-host { position: relative; }
@@ -238,6 +239,7 @@ dd { margin: 4px 0 0; color: #2f4b39; font-size: .76rem; font-weight: 650; overf
   .editor-actions button { flex: 1; }
   .workspace-entry { margin: 12px; padding: 20px; grid-template-columns: minmax(0,1fr); gap: 16px; }
   .entry-actions { text-align: left; }
+  .entry-actions button { min-height: 44px; }
   .welcome-templates { display: grid; grid-template-columns: minmax(0,1fr); }
   .workspace, .app-shell[data-panel="none"] .workspace { display: flex; flex-direction: column; }
   .workspace-toolbar { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; padding: 10px 8px; }
