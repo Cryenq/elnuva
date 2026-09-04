@@ -15,7 +15,7 @@ export function createFitPanel(store: DomainStore, beforeStart: () => void) {
   let disposed = false;
   let progress: FitProgress = { status: "IDLE", requestId: null, elapsedMs: 0, budgetMs: 15000, message: "Request a room and furniture, then check whether they fit." };
   const section = element("section"); section.dataset.fitPanel = ""; section.className = "fit-panel";
-  const details = element("details");
+  const details = element("details"); details.open = true;
   const summary = element("summary", "Fit a new arrangement"); summary.dataset.focusKey = "section:fit";
   const content = element("div"); content.className = "disclosure-content";
   content.append(element("h2", "Make it Fit"), element("p", "Keep every existing item at its full size. Request additional furniture or a different room, then review a complete arrangement before applying it."));

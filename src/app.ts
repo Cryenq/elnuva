@@ -188,6 +188,7 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
 
   const selectItem = (id: string | null) => {
     if (disposed || !snapshot || (id !== null && !snapshot.workingState.furniture.some(item => item.id === id))) return;
+    if (id !== null) ui.showPanel("properties");
     if (selected === id) return;
     selected = id;
     draw(true);
@@ -236,7 +237,7 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
     const section = make("section");
     section.className = "scene-list panel-section";
     section.dataset.sceneItemList = "";
-    section.append(make("h2", "In this room"), make("p", "Select an item to fine-tune its position."));
+    section.append(make("h2", "In this room"));
     const list = make("ul");
     for (const item of snapshot.workingState.furniture) {
       const entry = furnitureCatalogById(item.catalogId)!;
@@ -361,7 +362,11 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
     }
     ui.summarySlot.replaceChildren(summary);
     fitPanel.update(snapshot);
-    ui.catalogSlot.replaceChildren(catalogControls(snapshot, store, status, cancelGestures, fitPanel.request));
+    ui.catalogSlot.replaceChildren(catalogControls(snapshot, store, status, cancelGestures, id => {
+      fitPanel.request(id);
+      ui.showPanel("fit");
+      ui.panelToggles.fit.focus();
+    }));
     drawSceneList();
     ui.inspectorSlot.replaceChildren(tagInspectorFocus(inspector(snapshot, {
       mutate: mutatePose,
@@ -387,10 +392,13 @@ export function hydrateApp(root: HTMLElement, _fixture?: InspectSpatialLayoutDat
       remove: id => { cancelGestures(); const result = store.deleteConstraint(id); status(result.ok ? `${id} deleted.` : result.error.message); },
     }), addConstraintControls(snapshot, store, status, cancelGestures));
     ui.layoutDataSlot.replaceChildren(summaryTable(snapshot));
+    const reviewWasOpen = ui.reviewSlot.querySelector<HTMLDetailsElement>("[data-review-details]")?.open ?? false;
     ui.reviewSlot.replaceChildren(reviewPanel(snapshot.preview, {
       apply: () => { const targetRoom = snapshot?.preview?.status === "pending-human-fit" ? snapshot.preview.projectedState.room : null; cancelGestures(); void store.apply().then(result => { if (disposed) return; if (result.ok && targetRoom) fitPanel.applied(targetRoom); status(result.ok ? "Preview applied. It is not saved yet." : result.error.message); }); },
       discard: () => { cancelGestures(); const result = store.discard(); status(result.ok ? "Preview discarded. Working layout unchanged." : result.error.message); },
     }));
+    const reviewDetails = ui.reviewSlot.querySelector<HTMLDetailsElement>("[data-review-details]");
+    if (reviewDetails) reviewDetails.open = reviewWasOpen;
     if (!selectionOnly && !cancelSvg) drawPrecision();
     else {
       for (const item of Array.from(ui.precisionHost.querySelectorAll<SVGGElement>("[data-furniture-id]"))) {
