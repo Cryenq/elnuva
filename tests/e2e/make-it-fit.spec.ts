@@ -41,7 +41,81 @@ async function start(page: Page) {
   await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "FOUND", { timeout: 17000 });
 }
 
+// A completed result may be cleared, reconciled, or explicitly presented as
+// history. Do not require a new status enum or particular repaired wording.
+const historicalResult = /(?:\b(?:previous|last|completed|historical)\s+(?:fit\s+)?(?:run|search|result)\b|\b(?:run|search|result)\s*\(historical\))/i;
+async function expectResolvedFitStatus(page: Page) {
+  const status = page.locator("[data-fit-status]");
+  await expect(status).toBeVisible();
+  await expect(status).toHaveAttribute("data-fit-state", /^(IDLE|RUNNING|FOUND|ALREADY_FITS|PROVEN_IMPOSSIBLE|CANCELLED|RESOURCE_LIMIT|INVALID_REQUEST|INTERNAL_ERROR)$/);
+  await expect(status).toContainText(/elapsed.*\d+\s*\/\s*15000\s*ms/i);
+  const text = await status.innerText();
+  if (/ready for review|not (?:yet |been )?(?:applied|saved)|unapplied|unsaved|awaiting (?:review|application)/i.test(text)) {
+    expect(text, "Resolved preview must not retain unqualified live ready/unapplied/unsaved claims").toMatch(historicalResult);
+  }
+}
+async function expectCurrentPendingGuidance(page: Page) {
+  await expect(page.locator("[data-human-fit-preview]").getByRole("heading", { name: "Make it Fit preview — Not applied — Not saved", exact: true })).toBeVisible();
+  const messages = page.locator("section[data-fit-panel] [data-fit-status], section[data-fit-panel] .fit-request-note");
+  await expect(messages).toHaveCount(2);
+  for (const message of await messages.all()) {
+    const text = await message.innerText();
+    if (/(?:arrangement|preview|layout)\s+(?:(?:is|was|has been)\s+)?(?:applied|saved)\b/i.test(text)) {
+      expect(text, "A fresh unapplied preview must not inherit an unqualified prior Apply/Save claim").toMatch(historicalResult);
+    }
+  }
+}
+
 test.describe("explicit full-state Make it Fit workflow", () => {
+  for (const resolution of ["Apply", "Save"] as const) test(`reconciles fit-panel status after successful ${resolution}`, async ({ page }) => {
+    await setup(page); const before = await inspect(page), saved = await persisted(page);
+    await queueChair(page); await start(page); await expectCurrentPendingGuidance(page);
+    await page.getByRole("button", { name: "Apply preview", exact: true }).click();
+    const applied = await inspect(page);
+    expect(applied.preview).toEqual({ status: "none" }); expect(applied.baseRevision).toBe(before.baseRevision + 1);
+    expect(applied.workingState.room).toEqual({ widthMm: 3500, depthMm: 3200 });
+    expect(await persisted(page)).toEqual(saved);
+    if (resolution === "Save") {
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      const stored = await persisted(page);
+      expect(JSON.parse(stored.local.find(([key]) => key === "elnuva:v1:template:home-office")![1]).state).toEqual(applied.workingState);
+      expect(await inspect(page)).toEqual(applied);
+    }
+    await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0);
+    await expectResolvedFitStatus(page);
+  });
+
+  test("reconciles fit-panel status after Discard without changing the working or saved layout", async ({ page }) => {
+    await setup(page); const before = await inspect(page), saved = await persisted(page);
+    await queueChair(page); await start(page); await expectCurrentPendingGuidance(page);
+    await page.getByRole("button", { name: "Discard preview", exact: true }).click();
+    await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0);
+    expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    await expectResolvedFitStatus(page);
+  });
+
+  test("a fresh Fit after Apply Save and Undo does not inherit an applied-status claim", async ({ page }) => {
+    await setup(page); const before = await inspect(page);
+    await queueChair(page); await start(page); await expectCurrentPendingGuidance(page);
+    await page.getByRole("button", { name: "Apply preview", exact: true }).click();
+    const applied = await inspect(page);
+    await page.getByRole("button", { name: "Save", exact: true }).click(); const savedTarget = await persisted(page);
+    expect(JSON.parse(savedTarget.local.find(([key]) => key === "elnuva:v1:template:home-office")![1]).state).toEqual(applied.workingState);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    const freshBase = await inspect(page);
+    expect(freshBase.workingState).toEqual(before.workingState); expect(freshBase.preview).toEqual({ status: "none" });
+    // Do not overwrite the previous confirmation by requesting another item.
+    // The changed target room alone must produce a new, unapplied preview.
+    await start(page);
+    const freshPreview = await inspect(page);
+    expect(freshPreview.workingState).toEqual(freshBase.workingState);
+    expect(freshPreview.baseRevision).toBe(freshBase.baseRevision); expect(freshPreview.baseHash).toBe(freshBase.baseHash);
+    expect(freshPreview.preview).toEqual({ status: "pending-human-fit", notApplied: true, notSaved: true, requiresHumanAction: true });
+    expect(await persisted(page)).toEqual(savedTarget);
+    await expectCurrentPendingGuidance(page);
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  });
+
   test("keeps queue/preview ephemeral, shows both full-target ghosts, applies once, saves separately and undoes the whole state", async ({ page }) => {
     await setup(page); const before = await inspect(page), saved = await persisted(page), id = await queueChair(page);
     expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved); await start(page);
