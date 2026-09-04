@@ -219,3 +219,92 @@ test.describe("explicit full-state Make it Fit workflow", () => {
     await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0); expect((await inspect(page)).workingState).toEqual(initial);
   });
 });
+
+// Completed outcomes describe the evaluated request, which can differ from the
+// now-visible room or editable inputs. Accept explicit historical scope without
+// prescribing a replacement sentence or inventing another progress enum.
+const historicalRequest = /(?:\b(?:last|previous|prior|completed|historical)\b[^.!?\n]{0,80}\b(?:request|run|search|result|outcome)\b|\b(?:request|run|search|result|outcome)\b[^.!?\n]{0,80}\b(?:previous|prior|historical)\b)/i;
+async function expectLastRequestOutcome(page: Page, outcome: "ALREADY_FITS" | "PROVEN_IMPOSSIBLE") {
+  const status = page.locator("[data-fit-status]");
+  await expect(status).toBeVisible();
+  await expect(status).toHaveAttribute("data-fit-state", outcome);
+  await expect(status).toHaveAttribute("aria-live", "polite");
+  await expect(status).toContainText(/elapsed.*\d+\s*\/\s*15000\s*ms/i);
+  expect(await status.innerText(), "A completed outcome must be explicitly scoped to its evaluated request, not assert the changed room or queue still fits/fails").toMatch(historicalRequest);
+}
+
+test.describe("completed fit outcomes remain scoped to the evaluated request", () => {
+  test("ALREADY_FITS stays historical after Reset changes the working room", async ({ page }) => {
+    await setup(page); const before = await inspect(page), saved = await persisted(page);
+    const workers: string[] = []; page.on("worker", worker => workers.push(worker.url()));
+    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "ALREADY_FITS");
+    expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved); expect(workers).toEqual([]);
+    await page.getByRole("button", { name: "Reset", exact: true }).click();
+    const reset = await inspect(page);
+    expect(reset.workingState.room).toEqual({ widthMm: 3600, depthMm: 3000 });
+    expect(reset.workingState.furniture.map(item => item.id)).toEqual(["chair-main", "desk-main", "storage-main"]);
+    expect(reset.baseRevision).toBe(before.baseRevision + 1); expect(reset.baseHash).not.toBe(before.baseHash);
+    expect(reset.preview).toEqual({ status: "none" }); expect(await persisted(page)).toEqual(saved);
+    await expect(page.getByLabel("Fit room width (mm)", { exact: true })).toHaveValue("3000");
+    await expect(page.getByLabel("Fit room depth (mm)", { exact: true })).toHaveValue("3000");
+    await expect(page.locator("[data-fit-request-list] [data-fit-request-id]")).toHaveCount(0);
+    await expectLastRequestOutcome(page, "ALREADY_FITS");
+  });
+
+  for (const change of ["room input", "requested addition"] as const) test(`ALREADY_FITS stays historical after editing ${change} and a fresh run has current preview guidance`, async ({ page }) => {
+    await setup(page); const before = await inspect(page), saved = await persisted(page);
+    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "ALREADY_FITS");
+    expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    if (change === "room input") {
+      await page.getByLabel("Fit room width (mm)", { exact: true }).fill("3500");
+      await expect(page.getByLabel("Fit room width (mm)", { exact: true })).toHaveValue("3500");
+      await expect(page.locator("[data-fit-request-list] [data-fit-request-id]")).toHaveCount(0);
+    } else {
+      await queueChair(page);
+      await expect(page.getByLabel("Fit room width (mm)", { exact: true })).toHaveValue("3000");
+    }
+    await expect(page.getByLabel("Fit room depth (mm)", { exact: true })).toHaveValue("3000");
+    expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    await expectLastRequestOutcome(page, "ALREADY_FITS");
+    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await expect(page.locator("[data-fit-status]")).toHaveAttribute("data-fit-state", "FOUND", { timeout: 17000 });
+    await expectCurrentPendingGuidance(page);
+    await expect(page.locator("[data-fit-status]")).toContainText(/ready for review/i);
+    await expect(page.locator("[data-fit-status]")).toContainText(/not been applied or saved/i);
+    const preview = await inspect(page);
+    expect(preview.workingState).toEqual(before.workingState); expect(preview.baseRevision).toBe(before.baseRevision); expect(preview.baseHash).toBe(before.baseHash);
+    expect(preview.preview).toEqual({ status: "pending-human-fit", notApplied: true, notSaved: true, requiresHumanAction: true });
+    expect(await persisted(page)).toEqual(saved);
+  });
+
+  test("PROVEN_IMPOSSIBLE stays historical after removing requested beds and a fresh request replaces it", async ({ page }) => {
+    const empty: WorkingState = { ...initial, room: { widthMm: 2000, depthMm: 2000 }, furniture: [] };
+    await setup(page, empty); const before = await inspect(page), saved = await persisted(page);
+    const workers: string[] = []; page.on("worker", worker => workers.push(worker.url()));
+    await page.getByLabel("Furniture to request", { exact: true }).selectOption("bed-2000x1600");
+    for (let index = 0; index < 2; index++) await page.getByRole("button", { name: "Request furniture", exact: true }).click();
+    const rows = page.locator("[data-fit-request-list] [data-fit-request-id]"); await expect(rows).toHaveCount(2);
+    for (const row of await rows.all()) await expect(row).toContainText(/2000.*1600/);
+    expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    const status = page.locator("[data-fit-status]");
+    await expect(status).toHaveAttribute("data-fit-state", "PROVEN_IMPOSSIBLE", { timeout: 17000 });
+    await expect(status).toContainText("No arrangement exists within this 2D model and its required constraints.");
+    expect(workers).toHaveLength(1); expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    for (const remaining of [1, 0]) {
+      await rows.first().getByRole("button", { name: /^Remove request / }).click();
+      await expect(rows).toHaveCount(remaining);
+      expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+    }
+    await expect(page.getByLabel("Fit room width (mm)", { exact: true })).toHaveValue("2000");
+    await expect(page.getByLabel("Fit room depth (mm)", { exact: true })).toHaveValue("2000");
+    await expect(page.locator("[data-human-fit-preview]")).toHaveCount(0);
+    await expectLastRequestOutcome(page, "PROVEN_IMPOSSIBLE");
+    await page.getByRole("button", { name: "Make it Fit", exact: true }).click();
+    await expect(status).toHaveAttribute("data-fit-state", "ALREADY_FITS");
+    await expect(status).not.toContainText("No arrangement exists within this 2D model and its required constraints.");
+    expect(workers).toHaveLength(1); expect(await inspect(page)).toEqual(before); expect(await persisted(page)).toEqual(saved);
+  });
+});
