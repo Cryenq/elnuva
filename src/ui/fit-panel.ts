@@ -73,14 +73,24 @@ export function createFitPanel(store: DomainStore, beforeStart: () => void) {
     additions = [...additions, result.data]; note.textContent = "Requested only. Your working room and saved layout are unchanged.";
     details.open = true; renderRequests();
   }
+  function renderStatus(): void {
+    const preview = snapshot?.preview;
+    const reviewingResult = preview?.status === "pending-human-fit" && preview.request.requestId === progress.requestId;
+    const message = progress.status === "FOUND" && !reviewingResult
+      ? "Last completed fit search found an arrangement."
+      : progress.message;
+    status.dataset.fitState = progress.status;
+    const text = `${message} Elapsed ${Math.round(progress.elapsedMs)} / ${progress.budgetMs} ms.`;
+    if (status.textContent !== text) status.textContent = text;
+  }
   const controller = createFitController(store, value => {
     if (disposed) return;
-    progress = value; status.dataset.fitState = value.status;
-    status.textContent = `${value.message} Elapsed ${Math.round(value.elapsedMs)} / ${value.budgetMs} ms.`;
+    progress = value; renderStatus();
     controls();
   });
   form.addEventListener("submit", event => {
     event.preventDefault(); if (disposed || !snapshot || snapshot.preview || progress.status === "RUNNING") return;
+    note.textContent = "";
     beforeStart();
     void controller.start({ targetRoom: { widthMm: Number(width.value), depthMm: Number(depth.value) }, additions: [...additions] });
   });
@@ -93,11 +103,11 @@ export function createFitPanel(store: DomainStore, beforeStart: () => void) {
       const reset = !snapshot || snapshot.activeTemplateId !== next.activeTemplateId;
       snapshot = next;
       if (reset) { controller.cancel(); additions = []; width.value = String(next.workingState.room.widthMm); depth.value = String(next.workingState.room.depthMm); note.textContent = ""; renderRequests(); }
-      controls();
+      renderStatus(); controls();
     },
     applied(room: Room) {
       if (disposed) return;
-      additions = []; note.textContent = "Arrangement applied. Save separately to keep it on this device.";
+      additions = []; note.textContent = "Fit result was applied. Saving is a separate action.";
       width.value = String(room.widthMm); depth.value = String(room.depthMm);
       renderRequests();
     },
